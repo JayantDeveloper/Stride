@@ -1,11 +1,13 @@
-// apiClient.js — thin fetch wrapper; uses Vite proxy so no base URL needed in dev
+// apiClient.js — thin fetch wrapper; uses Vite proxy in dev, VITE_API_URL in prod
+
+const BASE = import.meta.env.VITE_API_URL ?? ''
 
 export async function apiRequest(path, { method = 'GET', body } = {}) {
   const headers = { 'Content-Type': 'application/json' }
 
   let res
   try {
-    res = await fetch(path, {
+    res = await fetch(`${BASE}${path}`, {
       method,
       headers,
       credentials: 'include', // needed for session cookie on OAuth redirect

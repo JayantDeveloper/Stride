@@ -18,7 +18,7 @@ app.use(session({
   secret: process.env.SESSION_SECRET || "dev-secret-change-in-production",
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: false, httpOnly: true, maxAge: 10 * 60 * 1000 }, // 10 min — only for OAuth state
+  cookie: { secure: process.env.NODE_ENV === 'production', httpOnly: true, maxAge: 10 * 60 * 1000 }, // 10 min — only for OAuth state
 }));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -52,4 +52,4 @@ app.put("/api/pomodoro", (req, res) => {
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
-app.listen(PORT, () => console.log(`focus-exec backend on http://localhost:${PORT}`));
+app.listen(PORT, "0.0.0.0", () => console.log(`focus-exec backend on http://localhost:${PORT}`));

@@ -21,8 +21,9 @@ export function useGoogleAuth() {
   useEffect(() => { checkStatus() }, [checkStatus])
 
   const connect = useCallback(() => {
-    // Full-page redirect to backend OAuth initiation
-    window.location.href = '/api/auth/google'
+    // Full-page redirect to backend OAuth initiation (must hit Railway, not Vercel)
+    const base = import.meta.env.VITE_API_URL ?? ''
+    window.location.href = `${base}/api/auth/google`
   }, [])
 
   const disconnect = useCallback(async () => {
