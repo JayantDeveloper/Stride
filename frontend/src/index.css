@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@theme {
+  /* Notion dark palette */
+  --color-notion-bg:          #191919;
+  --color-notion-surface:     #202020;
+  --color-notion-hover:       #2f2f2f;
+  --color-notion-border:      #2f2f2f;
+  --color-notion-text:        #e6e6e6;
+  --color-notion-muted:       #787774;
+  --color-notion-placeholder: #555555;
+}
+
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  html, body, #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    background-color: var(--color-notion-bg);
+    color: var(--color-notion-text);
+    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Notion-style scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #3d3d3d; border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: #4d4d4d; }
+
+  /* Date/time input styling */
+  input[type="date"],
+  input[type="datetime-local"],
+  input[type="time"] {
+    color-scheme: dark;
+  }
+
+  /* Selection */
+  ::selection {
+    background-color: #3730a3;
+    color: #e6e6e6;
+  }
+}
