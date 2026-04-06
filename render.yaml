@@ -5,10 +5,6 @@ services:
     rootDir: backend
     buildCommand: npm install
     startCommand: node server.js
-    disk:
-      name: stride-data
-      mountPath: /data
-      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
@@ -25,4 +21,8 @@ services:
       - key: OPENAI_API_KEY
         sync: false
       - key: SESSION_SECRET
+        sync: false
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
         sync: false

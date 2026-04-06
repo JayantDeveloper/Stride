@@ -2,7 +2,7 @@
 
 const express = require("express");
 const crypto = require("crypto");
-const db = require("../db/database");
+const { dbGet, dbRun } = require("../db/database");
 const { getAuthUrl, handleCallback } = require("../services/googleCalendar");
 
 const router = express.Router();
@@ -30,7 +30,6 @@ router.get("/google/callback", async (req, res) => {
     return res.redirect(`${FRONTEND_URL}/settings?error=missing_code`);
   }
 
-  // Validate state to prevent CSRF (skip if session middleware not set up)
   if (req.session.oauthState && req.session.oauthState !== state) {
     return res.redirect(`${FRONTEND_URL}/settings?error=invalid_state`);
   }
@@ -46,8 +45,8 @@ router.get("/google/callback", async (req, res) => {
 });
 
 // GET /api/auth/status
-router.get("/status", (req, res) => {
-  const creds = db.prepare("SELECT id, email, updated_at FROM google_credentials WHERE id = 1").get();
+router.get("/status", async (req, res) => {
+  const creds = await dbGet("SELECT id, email, updated_at FROM google_credentials WHERE id = 1");
   res.json({
     connected: !!(creds?.email),
     email: creds?.email ?? null,
@@ -55,8 +54,8 @@ router.get("/status", (req, res) => {
 });
 
 // DELETE /api/auth/google — disconnect
-router.delete("/google", (req, res) => {
-  db.prepare("DELETE FROM google_credentials WHERE id = 1").run();
+router.delete("/google", async (req, res) => {
+  await dbRun("DELETE FROM google_credentials WHERE id = 1");
   res.json({ ok: true });
 });
 

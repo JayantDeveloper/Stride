@@ -2,12 +2,12 @@
 
 const express = require("express");
 const crypto = require("crypto");
-const db = require("../db/database");
+const { dbGet, dbAll, dbRun } = require("../db/database");
 
 const router = express.Router();
 
 // GET /api/checkins?date=YYYY-MM-DD
-router.get("/", (req, res) => {
+router.get("/", async (req, res) => {
   let query = "SELECT * FROM accountability_checkins";
   const params = [];
 
@@ -17,12 +17,12 @@ router.get("/", (req, res) => {
   }
 
   query += " ORDER BY prompted_at DESC";
-  const checkins = db.prepare(query).all(...params);
+  const checkins = await dbAll(query, params);
   res.json({ checkins });
 });
 
-// POST /api/checkins — create a check-in (called when timer ends)
-router.post("/", (req, res) => {
+// POST /api/checkins — create a check-in
+router.post("/", async (req, res) => {
   const id = crypto.randomUUID();
   const checkin = {
     id,
@@ -34,20 +34,20 @@ router.post("/", (req, res) => {
     completed_at: req.body.outcome ? new Date().toISOString() : null,
   };
 
-  db.prepare(`
+  await dbRun(`
     INSERT INTO accountability_checkins
       (id, focus_session_id, task_id, outcome, notes, ai_followup, completed_at)
-    VALUES
-      (@id, @focus_session_id, @task_id, @outcome, @notes, @ai_followup, @completed_at)
-  `).run(checkin);
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `, [checkin.id, checkin.focus_session_id, checkin.task_id, checkin.outcome,
+      checkin.notes, checkin.ai_followup, checkin.completed_at]);
 
-  const created = db.prepare("SELECT * FROM accountability_checkins WHERE id = ?").get(id);
+  const created = await dbGet("SELECT * FROM accountability_checkins WHERE id = ?", [id]);
   res.status(201).json({ checkin: created });
 });
 
 // PATCH /api/checkins/:id — submit outcome for an existing check-in
-router.patch("/:id", (req, res) => {
-  const checkin = db.prepare("SELECT * FROM accountability_checkins WHERE id = ?").get(req.params.id);
+router.patch("/:id", async (req, res) => {
+  const checkin = await dbGet("SELECT * FROM accountability_checkins WHERE id = ?", [req.params.id]);
   if (!checkin) return res.status(404).json({ error: "Check-in not found" });
 
   const updates = [];
@@ -63,8 +63,8 @@ router.patch("/:id", (req, res) => {
   if (updates.length === 0) return res.json({ checkin });
   params.push(req.params.id);
 
-  db.prepare(`UPDATE accountability_checkins SET ${updates.join(", ")} WHERE id = ?`).run(...params);
-  const updated = db.prepare("SELECT * FROM accountability_checkins WHERE id = ?").get(req.params.id);
+  await dbRun(`UPDATE accountability_checkins SET ${updates.join(", ")} WHERE id = ?`, params);
+  const updated = await dbGet("SELECT * FROM accountability_checkins WHERE id = ?", [req.params.id]);
   res.json({ checkin: updated });
 });
 

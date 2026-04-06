@@ -1,70 +1,61 @@
 // routes/analytics.js — productivity stats
 
 const express = require("express");
-const db = require("../db/database");
+const { dbGet, dbAll } = require("../db/database");
 
 const router = express.Router();
 
 // GET /api/analytics/summary?start=YYYY-MM-DD&end=YYYY-MM-DD
-router.get("/summary", (req, res) => {
+router.get("/summary", async (req, res) => {
   const start = req.query.start ?? sevenDaysAgo();
   const end = req.query.end ?? today();
 
-  // Tasks completed in range
-  const completedTasks = db.prepare(`
-    SELECT COUNT(*) as count FROM tasks
-    WHERE status = 'Done' AND date(updated_at) BETWEEN date(?) AND date(?)
-  `).get(start, end);
-
-  // Total tasks
-  const totalTasks = db.prepare("SELECT COUNT(*) as count FROM tasks").get();
-
-  // Focus sessions in range
-  const sessions = db.prepare(`
-    SELECT
-      COUNT(*) as total_sessions,
-      SUM(COALESCE(actual_mins, planned_mins)) as total_focus_mins,
-      SUM(CASE WHEN outcome = 'completed' THEN 1 ELSE 0 END) as completed_sessions,
-      SUM(CASE WHEN outcome = 'interrupted' THEN 1 ELSE 0 END) as interrupted_sessions
-    FROM focus_sessions
-    WHERE session_type = 'focus'
-      AND date(started_at) BETWEEN date(?) AND date(?)
-      AND ended_at IS NOT NULL
-  `).get(start, end);
-
-  // Check-in outcomes in range
-  const checkinOutcomes = db.prepare(`
-    SELECT outcome, COUNT(*) as count
-    FROM accountability_checkins
-    WHERE date(prompted_at) BETWEEN date(?) AND date(?)
-      AND outcome IS NOT NULL
-    GROUP BY outcome
-  `).all(start, end);
+  const [completedTasks, totalTasks, sessions, checkinOutcomes, dailyTasks, dailyFocus] = await Promise.all([
+    dbGet(`
+      SELECT COUNT(*) as count FROM tasks
+      WHERE status = 'Done' AND date(updated_at) BETWEEN date(?) AND date(?)
+    `, [start, end]),
+    dbGet("SELECT COUNT(*) as count FROM tasks"),
+    dbGet(`
+      SELECT
+        COUNT(*) as total_sessions,
+        SUM(COALESCE(actual_mins, planned_mins)) as total_focus_mins,
+        SUM(CASE WHEN outcome = 'completed' THEN 1 ELSE 0 END) as completed_sessions,
+        SUM(CASE WHEN outcome = 'interrupted' THEN 1 ELSE 0 END) as interrupted_sessions
+      FROM focus_sessions
+      WHERE session_type = 'focus'
+        AND date(started_at) BETWEEN date(?) AND date(?)
+        AND ended_at IS NOT NULL
+    `, [start, end]),
+    dbAll(`
+      SELECT outcome, COUNT(*) as count
+      FROM accountability_checkins
+      WHERE date(prompted_at) BETWEEN date(?) AND date(?)
+        AND outcome IS NOT NULL
+      GROUP BY outcome
+    `, [start, end]),
+    dbAll(`
+      SELECT date(updated_at) as date, COUNT(*) as completed
+      FROM tasks
+      WHERE status = 'Done' AND date(updated_at) BETWEEN date(?) AND date(?)
+      GROUP BY date(updated_at)
+      ORDER BY date ASC
+    `, [start, end]),
+    dbAll(`
+      SELECT date(started_at) as date,
+             SUM(COALESCE(actual_mins, planned_mins)) as focus_mins,
+             COUNT(*) as sessions
+      FROM focus_sessions
+      WHERE session_type = 'focus'
+        AND ended_at IS NOT NULL
+        AND date(started_at) BETWEEN date(?) AND date(?)
+      GROUP BY date(started_at)
+      ORDER BY date ASC
+    `, [start, end]),
+  ]);
 
   const outcomeCounts = {};
   for (const row of checkinOutcomes) outcomeCounts[row.outcome] = row.count;
-
-  // Daily breakdown (tasks completed per day)
-  const dailyTasks = db.prepare(`
-    SELECT date(updated_at) as date, COUNT(*) as completed
-    FROM tasks
-    WHERE status = 'Done' AND date(updated_at) BETWEEN date(?) AND date(?)
-    GROUP BY date(updated_at)
-    ORDER BY date ASC
-  `).all(start, end);
-
-  // Daily focus minutes
-  const dailyFocus = db.prepare(`
-    SELECT date(started_at) as date,
-           SUM(COALESCE(actual_mins, planned_mins)) as focus_mins,
-           COUNT(*) as sessions
-    FROM focus_sessions
-    WHERE session_type = 'focus'
-      AND ended_at IS NOT NULL
-      AND date(started_at) BETWEEN date(?) AND date(?)
-    GROUP BY date(started_at)
-    ORDER BY date ASC
-  `).all(start, end);
 
   res.json({
     range: { start, end },
@@ -85,11 +76,11 @@ router.get("/summary", (req, res) => {
 });
 
 // GET /api/analytics/trends — last 7 days, one row per day
-router.get("/trends", (req, res) => {
+router.get("/trends", async (req, res) => {
   const start = sevenDaysAgo();
   const end = today();
 
-  const rows = db.prepare(`
+  const rows = await dbAll(`
     SELECT
       d.date,
       COALESCE(t.completed, 0) as tasks_completed,
@@ -116,7 +107,7 @@ router.get("/trends", (req, res) => {
       GROUP BY date(started_at)
     ) f ON d.date = f.date
     ORDER BY d.date ASC
-  `).all(start, end);
+  `, [start, end]);
 
   res.json({ trends: rows });
 });

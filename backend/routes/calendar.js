@@ -2,7 +2,7 @@
 
 const express = require("express");
 const crypto = require("crypto");
-const db = require("../db/database");
+const { dbGet, dbAll, dbRun } = require("../db/database");
 const gcal = require("../services/googleCalendar");
 const {
   latestUnresolvedMissedBlock,
@@ -14,8 +14,7 @@ const {
 const router = express.Router();
 
 // GET /api/calendar/events?start=ISO&end=ISO
-// Returns locally cached events (synced from Google or created by app)
-router.get("/events", (req, res) => {
+router.get("/events", async (req, res) => {
   let query = "SELECT * FROM calendar_events";
   const params = [];
   const conditions = [];
@@ -32,30 +31,29 @@ router.get("/events", (req, res) => {
   if (conditions.length) query += " WHERE " + conditions.join(" AND ");
   query += " ORDER BY start_time ASC";
 
-  const events = db.prepare(query).all(...params);
+  const events = await dbAll(query, params);
   res.json({ events });
 });
 
-router.get("/missed-blocks/latest", (req, res) => {
-  const block = latestUnresolvedMissedBlock(new Date());
+router.get("/missed-blocks/latest", async (req, res) => {
+  const block = await latestUnresolvedMissedBlock(new Date());
   if (!block) {
     return res.json({ block: null });
   }
-
   res.json({ block });
 });
 
-router.post("/missed-blocks/:id/dismiss", (req, res) => {
-  const block = db.prepare("SELECT id FROM calendar_events WHERE id = ?").get(req.params.id);
+router.post("/missed-blocks/:id/dismiss", async (req, res) => {
+  const block = await dbGet("SELECT id FROM calendar_events WHERE id = ?", [req.params.id]);
   if (!block) return res.status(404).json({ error: "Missed block not found" });
 
-  const hiddenUntil = dismissMissedBlock(req.params.id, new Date());
+  const hiddenUntil = await dismissMissedBlock(req.params.id, new Date());
   res.json({ ok: true, hidden_until: hiddenUntil });
 });
 
-router.post("/missed-blocks/:id/start-sprint", (req, res) => {
+router.post("/missed-blocks/:id/start-sprint", async (req, res) => {
   try {
-    const result = startRecoverySprint(req.params.id);
+    const result = await startRecoverySprint(req.params.id);
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -84,10 +82,9 @@ router.post("/missed-blocks/:id/defer-tomorrow", async (req, res) => {
 
 // POST /api/calendar/sync — pull events from Google Calendar into local cache
 router.post("/sync", async (req, res) => {
-  const creds = db.prepare("SELECT id FROM google_credentials WHERE id = 1").get();
+  const creds = await dbGet("SELECT id FROM google_credentials WHERE id = 1");
   if (!creds) return res.status(401).json({ error: "Google Calendar not connected" });
 
-  // Sync 3 months back and 3 months forward
   const now = new Date();
   const start = new Date(now);
   start.setMonth(start.getMonth() - 3);
@@ -97,40 +94,23 @@ router.post("/sync", async (req, res) => {
   try {
     const googleEvents = await gcal.listEvents(start.toISOString(), end.toISOString());
 
-    // Upsert each event into local cache
-    const upsert = db.prepare(`
-      INSERT INTO calendar_events
-        (id, google_event_id, google_cal_id, title, description, location, start_time, end_time, all_day, event_type, color, color_id, synced_at)
-      VALUES
-        (?, ?, 'primary', ?, ?, ?, ?, ?, ?, 'external', 'blue', ?, datetime('now'))
-      ON CONFLICT(google_event_id) DO UPDATE SET
-        title = excluded.title,
-        description = excluded.description,
-        location = excluded.location,
-        start_time = excluded.start_time,
-        end_time = excluded.end_time,
-        all_day = excluded.all_day,
-        color_id = excluded.color_id,
-        synced_at = datetime('now')
-    `);
-
-    const syncAll = db.transaction((events) => {
-      for (const e of events) {
-        upsert.run(
-          e.id,          // use google event id as our id too
-          e.id,
-          e.title,
-          e.description,
-          e.location ?? "",
-          e.start_time,
-          e.end_time,
-          e.all_day ? 1 : 0,
-          e.color_id ?? ""
-        );
-      }
-    });
-
-    syncAll(googleEvents);
+    for (const e of googleEvents) {
+      await dbRun(`
+        INSERT INTO calendar_events
+          (id, google_event_id, google_cal_id, title, description, location, start_time, end_time, all_day, event_type, color, color_id, synced_at)
+        VALUES (?, ?, 'primary', ?, ?, ?, ?, ?, ?, 'external', 'blue', ?, datetime('now'))
+        ON CONFLICT(google_event_id) DO UPDATE SET
+          title = excluded.title,
+          description = excluded.description,
+          location = excluded.location,
+          start_time = excluded.start_time,
+          end_time = excluded.end_time,
+          all_day = excluded.all_day,
+          color_id = excluded.color_id,
+          synced_at = datetime('now')
+      `, [e.id, e.id, e.title, e.description, e.location ?? "", e.start_time, e.end_time,
+          e.all_day ? 1 : 0, e.color_id ?? ""]);
+    }
 
     res.json({ synced: googleEvents.length, events: googleEvents });
   } catch (err) {
@@ -152,20 +132,21 @@ router.post("/events", async (req, res) => {
 
     const localId = googleEvent.id;
     const eventType = task_id ? "task_block" : "external";
-    db.prepare(`
+    await dbRun(`
       INSERT OR REPLACE INTO calendar_events
         (id, google_event_id, google_cal_id, title, description, location, start_time, end_time, all_day, event_type, task_id, block_state, color, color_id, synced_at)
-      VALUES
-        (?, ?, 'primary', ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, datetime('now'))
-    `).run(localId, localId, title, description, location, start_time, end_time, all_day ? 1 : 0, eventType, task_id ?? null, color, color_id);
+      VALUES (?, ?, 'primary', ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, datetime('now'))
+    `, [localId, localId, title, description, location, start_time, end_time,
+        all_day ? 1 : 0, eventType, task_id ?? null, color, color_id]);
 
-    // Link task to this calendar event
     if (task_id) {
-      db.prepare("UPDATE tasks SET calendar_event_id = ?, updated_at = datetime('now') WHERE id = ?")
-        .run(localId, task_id);
+      await dbRun(
+        "UPDATE tasks SET calendar_event_id = ?, updated_at = datetime('now') WHERE id = ?",
+        [localId, task_id]
+      );
     }
 
-    const saved = db.prepare("SELECT * FROM calendar_events WHERE id = ?").get(localId);
+    const saved = await dbGet("SELECT * FROM calendar_events WHERE id = ?", [localId]);
     res.status(201).json({ event: saved });
   } catch (err) {
     console.error("Create event error:", err.message);
@@ -175,24 +156,16 @@ router.post("/events", async (req, res) => {
 
 // PATCH /api/calendar/events/:id — update event in Google Calendar + local cache
 router.patch("/events/:id", async (req, res) => {
-  const event = db.prepare("SELECT * FROM calendar_events WHERE id = ?").get(req.params.id);
+  const event = await dbGet("SELECT * FROM calendar_events WHERE id = ?", [req.params.id]);
   if (!event) return res.status(404).json({ error: "Event not found" });
 
   const { title, description, location, start_time, end_time, all_day, color, color_id, task_id, block_state } = req.body;
 
   try {
     if (event.google_event_id) {
-      await gcal.updateEvent(event.google_event_id, {
-        title,
-        description,
-        location,
-        startTime: start_time,
-        endTime: end_time,
-        colorId: color_id,
-      });
+      await gcal.updateEvent(event.google_event_id, { title, description, location, startTime: start_time, endTime: end_time, colorId: color_id });
     }
 
-    // Build local update
     const updates = [];
     const params = [];
     if (title !== undefined)       { updates.push("title = ?");       params.push(title); }
@@ -209,10 +182,10 @@ router.patch("/events/:id", async (req, res) => {
     if (updates.length > 0) {
       updates.push("synced_at = datetime('now')");
       params.push(req.params.id);
-      db.prepare(`UPDATE calendar_events SET ${updates.join(", ")} WHERE id = ?`).run(...params);
+      await dbRun(`UPDATE calendar_events SET ${updates.join(", ")} WHERE id = ?`, params);
     }
 
-    const updated = db.prepare("SELECT * FROM calendar_events WHERE id = ?").get(req.params.id);
+    const updated = await dbGet("SELECT * FROM calendar_events WHERE id = ?", [req.params.id]);
     res.json({ event: updated });
   } catch (err) {
     console.error("Update event error:", err.message);
@@ -222,16 +195,15 @@ router.patch("/events/:id", async (req, res) => {
 
 // DELETE /api/calendar/events/:id — delete from Google Calendar + local cache
 router.delete("/events/:id", async (req, res) => {
-  const event = db.prepare("SELECT * FROM calendar_events WHERE id = ?").get(req.params.id);
+  const event = await dbGet("SELECT * FROM calendar_events WHERE id = ?", [req.params.id]);
   if (!event) return res.status(404).json({ error: "Event not found" });
 
   try {
     if (event.google_event_id) {
       await gcal.deleteEvent(event.google_event_id);
     }
-    db.prepare("DELETE FROM calendar_events WHERE id = ?").run(req.params.id);
-    // Unlink from any task
-    db.prepare("UPDATE tasks SET calendar_event_id = NULL WHERE calendar_event_id = ?").run(req.params.id);
+    await dbRun("DELETE FROM calendar_events WHERE id = ?", [req.params.id]);
+    await dbRun("UPDATE tasks SET calendar_event_id = NULL WHERE calendar_event_id = ?", [req.params.id]);
     res.json({ ok: true });
   } catch (err) {
     console.error("Delete event error:", err.message);
@@ -239,17 +211,16 @@ router.delete("/events/:id", async (req, res) => {
   }
 });
 
-// POST /api/calendar/organize — deterministic task-to-calendar scheduling (no AI)
+// POST /api/calendar/organize — deterministic task-to-calendar scheduling
 router.post("/organize", async (req, res) => {
   const start_from_now = req.body.start_from_now ?? false;
-  // "From now" mode always schedules against today; ignore any passed date
   const date = start_from_now
     ? new Date().toISOString().split("T")[0]
     : (req.body.date ?? new Date().toISOString().split("T")[0]);
 
   const PRIORITY_RANK = { Urgent: 0, High: 1, Medium: 2, Low: 3 };
-  const SLEEP_HOUR = 23;      // no tasks start at or after 11 PM
-  const OVERFLOW_HOUR = 8;    // overflow tasks resume at 8 AM next day
+  const SLEEP_HOUR = 23;
+  const OVERFLOW_HOUR = 8;
   const TASK_BLOCK_COLORS = ["#6366F1", "#A855F7", "#F59E0B", "#EC4899", "#14B8A6", "#EF4444", "#F97316"];
   const GCAL_COLOR_HEX = {
     tomato: "#D50000", flamingo: "#E67C73", tangerine: "#F4511E",
@@ -291,72 +262,66 @@ router.post("/organize", async (req, res) => {
   }
 
   try {
-    const gcalConnected = !!db.prepare("SELECT id FROM google_credentials WHERE id = 1").get();
+    const gcalConnected = !!(await dbGet("SELECT id FROM google_credentials WHERE id = 1"));
 
-    // Non-Done tasks sorted by priority then position
-    const allTasks = db.prepare("SELECT * FROM tasks WHERE status != 'Done' ORDER BY position ASC").all();
-    allTasks.sort((a, b) => {
+    const allTasksRaw = await dbAll("SELECT * FROM tasks WHERE status != 'Done' ORDER BY position ASC");
+    const allTasks = allTasksRaw.sort((a, b) => {
       const pd = (PRIORITY_RANK[a.priority] ?? 99) - (PRIORITY_RANK[b.priority] ?? 99);
       return pd !== 0 ? pd : (a.position ?? 0) - (b.position ?? 0);
     });
 
-    // Compute next-day string (local)
     const dateObj = new Date(date + "T00:00:00");
     const nextDateObj = new Date(dateObj);
     nextDateObj.setDate(nextDateObj.getDate() + 1);
     const nextDateStr = dateStr(nextDateObj);
 
-    // External events for date and next day (for conflict avoidance)
-    const externalEvents = db.prepare(`
+    const externalEvents = await dbAll(`
       SELECT * FROM calendar_events
       WHERE event_type = 'external'
       AND (date(start_time) = ? OR date(start_time) = ?)
       ORDER BY start_time ASC
-    `).all(date, nextDateStr);
+    `, [date, nextDateStr]);
 
-    // Pick task color not used by any external event on this day
     const usedHexes = new Set(externalEvents.map(e => {
       if (e.color?.startsWith("#")) return e.color;
       return GCAL_COLOR_HEX[e.color_id] ?? null;
     }).filter(Boolean));
     const taskColor = TASK_BLOCK_COLORS.find(c => !usedHexes.has(c)) ?? TASK_BLOCK_COLORS[0];
 
-    // Clear existing task_block + completed events for date and next day.
-    // In "from now" mode, preserve past blocks — only clear future ones.
     const nowISO = new Date().toISOString();
     const oldBlocks = start_from_now
-      ? db.prepare(`
+      ? await dbAll(`
           SELECT * FROM calendar_events
           WHERE event_type IN ('task_block', 'completed')
           AND (date(start_time) = ? OR date(start_time) = ?)
           AND start_time >= ?
-        `).all(date, nextDateStr, nowISO)
-      : db.prepare(`
+        `, [date, nextDateStr, nowISO])
+      : await dbAll(`
           SELECT * FROM calendar_events
           WHERE event_type IN ('task_block', 'completed')
           AND (date(start_time) = ? OR date(start_time) = ?)
-        `).all(date, nextDateStr);
+        `, [date, nextDateStr]);
 
     for (const ev of oldBlocks) {
       if (ev.google_event_id && gcalConnected) {
         try { await gcal.deleteEvent(ev.google_event_id); } catch (_) {}
       }
-      db.prepare("DELETE FROM calendar_events WHERE id = ?").run(ev.id);
-      db.prepare("UPDATE tasks SET calendar_event_id = NULL, updated_at = datetime('now') WHERE calendar_event_id = ?").run(ev.id);
+      await dbRun("DELETE FROM calendar_events WHERE id = ?", [ev.id]);
+      await dbRun(
+        "UPDATE tasks SET calendar_event_id = NULL, updated_at = datetime('now') WHERE calendar_event_id = ?",
+        [ev.id]
+      );
     }
 
-    // Determine starting cursor (local time)
     const today = dateStr(new Date());
     let cursor;
     if (start_from_now) {
-      // "From now": start at the next 30-min boundary from the current moment
       cursor = snapTo30(new Date());
       if (dateStr(cursor) !== date) {
         cursor = new Date(`${nextDateStr}T${pad(OVERFLOW_HOUR)}:00:00`);
       }
     } else if (date === today) {
       cursor = snapTo30(new Date());
-      // If snap rolled into next day, start tomorrow at OVERFLOW_HOUR
       if (dateStr(cursor) !== date) {
         cursor = new Date(`${nextDateStr}T${pad(OVERFLOW_HOUR)}:00:00`);
       }
@@ -372,10 +337,8 @@ router.post("/organize", async (req, res) => {
       const taskBlockIds = [];
 
       while (remaining > 0) {
-        // Advance cursor past any external event it currently overlaps
         cursor = advancePastExternal(cursor, externalEvents);
 
-        // Check sleep boundary; overflow to next day if past 11 PM
         let curDate = dateStr(cursor);
         const sleep = new Date(`${curDate}T${pad(SLEEP_HOUR)}:00:00`);
         if (cursor >= sleep) {
@@ -388,7 +351,6 @@ router.post("/organize", async (req, res) => {
           if (cursor >= nextSleep) { unscheduled.push(task); remaining = 0; break; }
         }
 
-        // Find earliest external event that starts inside this task's remaining window
         const potentialEnd = new Date(cursor.getTime() + remaining * 60_000);
         const blocking = externalEvents
           .filter(ev => new Date(ev.start_time) > cursor && new Date(ev.start_time) < potentialEnd)
@@ -399,7 +361,6 @@ router.post("/organize", async (req, res) => {
           blockEnd = new Date(blocking.start_time);
           minsScheduled = Math.round((blockEnd.getTime() - cursor.getTime()) / 60_000);
           if (minsScheduled < 10) {
-            // Gap too small — skip past the blocking event and try again
             cursor = snapTo30(new Date(blocking.end_time));
             continue;
           }
@@ -408,7 +369,6 @@ router.post("/organize", async (req, res) => {
           minsScheduled = remaining;
         }
 
-        // Cap at sleep time for the cursor's current day
         const sleepMs = new Date(`${dateStr(cursor)}T${pad(SLEEP_HOUR)}:00:00`).getTime();
         if (blockEnd.getTime() > sleepMs) {
           blockEnd = new Date(sleepMs);
@@ -421,22 +381,20 @@ router.post("/organize", async (req, res) => {
         const endISO = localISO(blockEnd);
 
         let eventId = crypto.randomUUID();
-        let googleEventId = null;
         if (gcalConnected) {
           try {
             const gEv = await gcal.createEvent({ title: task.title, startTime: startISO, endTime: endISO });
-            googleEventId = gEv.id;
             eventId = gEv.id;
           } catch (e) {
             console.error("GCal create failed:", e.message);
           }
         }
 
-        db.prepare(`
+        await dbRun(`
           INSERT INTO calendar_events
             (id, google_event_id, google_cal_id, title, description, start_time, end_time, event_type, task_id, block_state, color, synced_at)
           VALUES (?, ?, 'primary', ?, '', ?, ?, 'task_block', ?, 'scheduled', ?, datetime('now'))
-        `).run(eventId, googleEventId, task.title, startISO, endISO, task.id, taskColor);
+        `, [eventId, gcalConnected ? eventId : null, task.title, startISO, endISO, task.id, taskColor]);
 
         taskBlockIds.push(eventId);
         scheduled.push({ id: eventId, task_id: task.id, title: task.title, start_time: startISO, end_time: endISO });
@@ -444,16 +402,16 @@ router.post("/organize", async (req, res) => {
         remaining -= minsScheduled;
         cursor = blockEnd;
 
-        // If we hit a blocking event and there's still time remaining, jump past it
         if (blocking && remaining > 0) {
           cursor = snapTo30(new Date(blocking.end_time));
         }
       }
 
-      // Link task to its first calendar block (status unchanged — task stays in list)
       if (taskBlockIds.length > 0) {
-        db.prepare("UPDATE tasks SET calendar_event_id = ?, updated_at = datetime('now') WHERE id = ?")
-          .run(taskBlockIds[0], task.id);
+        await dbRun(
+          "UPDATE tasks SET calendar_event_id = ?, updated_at = datetime('now') WHERE id = ?",
+          [taskBlockIds[0], task.id]
+        );
       }
     }
 
@@ -465,7 +423,6 @@ router.post("/organize", async (req, res) => {
 });
 
 // GET /api/calendar/free-slots?date=YYYY-MM-DD
-// Returns available time slots for a given date (based on cached events)
 router.get("/free-slots", async (req, res) => {
   const date = req.query.date ?? new Date().toISOString().split("T")[0];
   const workStart = req.query.work_start ?? "09:00";
@@ -474,12 +431,11 @@ router.get("/free-slots", async (req, res) => {
   const dayStart = `${date}T00:00:00.000Z`;
   const dayEnd = `${date}T23:59:59.999Z`;
 
-  // Use a broader query to get all events that overlap the day
-  const events = db.prepare(`
+  const events = await dbAll(`
     SELECT * FROM calendar_events
     WHERE start_time <= ? AND end_time >= ?
     ORDER BY start_time ASC
-  `).all(dayEnd, dayStart);
+  `, [dayEnd, dayStart]);
 
   const slots = gcal.computeFreeSlots(events, date, workStart, workEnd);
   res.json({ date, slots });

@@ -3,6 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const session = require("express-session");
+const { initializeSchema, dbGet, dbRun } = require("./db/database");
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -18,7 +19,7 @@ app.use(session({
   secret: process.env.SESSION_SECRET || "dev-secret-change-in-production",
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: process.env.NODE_ENV === 'production', httpOnly: true, maxAge: 10 * 60 * 1000 }, // 10 min — only for OAuth state
+  cookie: { secure: process.env.NODE_ENV === 'production', httpOnly: true, maxAge: 10 * 60 * 1000 },
 }));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -32,19 +33,18 @@ app.use("/api/calendar",   require("./routes/calendar"));
 app.use("/api/auth",       require("./routes/auth"));
 app.use("/api/ai",         require("./routes/ai"));
 
-// Legacy pomodoro endpoint — reads/writes to app_settings for backward compat
-const db = require("./db/database");
-
-app.get("/api/pomodoro", (req, res) => {
-  const row = db.prepare("SELECT value FROM app_settings WHERE key = 'pomodoro_state'").get();
+// Legacy pomodoro endpoint
+app.get("/api/pomodoro", async (req, res) => {
+  const row = await dbGet("SELECT value FROM app_settings WHERE key = 'pomodoro_state'");
   const state = row ? JSON.parse(row.value) : {};
   res.json({ state });
 });
 
-app.put("/api/pomodoro", (req, res) => {
-  db.prepare(`
-    INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pomodoro_state', ?)
-  `).run(JSON.stringify(req.body));
+app.put("/api/pomodoro", async (req, res) => {
+  await dbRun(
+    "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
+    ["pomodoro_state", JSON.stringify(req.body)]
+  );
   res.json({ ok: true });
 });
 
@@ -52,4 +52,14 @@ app.put("/api/pomodoro", (req, res) => {
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
-app.listen(PORT, "0.0.0.0", () => console.log(`focus-exec backend on http://localhost:${PORT}`));
+// ── Start ─────────────────────────────────────────────────────────────────────
+
+async function start() {
+  await initializeSchema();
+  app.listen(PORT, "0.0.0.0", () => console.log(`focus-exec backend on http://localhost:${PORT}`));
+}
+
+start().catch(err => {
+  console.error("Failed to start server:", err);
+  process.exit(1);
+});

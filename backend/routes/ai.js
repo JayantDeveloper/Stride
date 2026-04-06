@@ -1,7 +1,8 @@
 // routes/ai.js — AI-powered scheduling, planning, and accountability endpoints
 
 const express = require("express");
-const db = require("../db/database");
+const crypto = require("crypto");
+const { dbGet, dbAll, dbRun } = require("../db/database");
 const openai = require("../services/openai");
 const gcal = require("../services/googleCalendar");
 const { latestUnresolvedMissedBlock, getTaskBlockById } = require("../services/taskBlockRecovery");
@@ -19,11 +20,10 @@ function normalizeStepList(steps) {
     .map((step) => step.replace(/^\d+\.\s+/, "").trim());
 }
 
-function taskFromRequest(taskId, fields = {}) {
+async function taskFromRequest(taskId, fields = {}) {
   if (taskId) {
-    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
-    if (!task) return null;
-    return task;
+    const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [taskId]);
+    return task ?? null;
   }
 
   return {
@@ -40,23 +40,23 @@ function taskFromRequest(taskId, fields = {}) {
   };
 }
 
-// POST /api/ai/suggest-slots — suggest 2-3 time slots for a task
+// POST /api/ai/suggest-slots
 router.post("/suggest-slots", async (req, res) => {
   const { task_id, date } = req.body;
   if (!task_id) return res.status(400).json({ error: "task_id required" });
 
-  const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task_id);
+  const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [task_id]);
   if (!task) return res.status(404).json({ error: "Task not found" });
 
   const targetDate = date ?? new Date().toISOString().split("T")[0];
   const dayStart = `${targetDate}T00:00:00.000Z`;
   const dayEnd = `${targetDate}T23:59:59.999Z`;
 
-  const events = db.prepare(`
+  const events = await dbAll(`
     SELECT * FROM calendar_events
     WHERE start_time <= ? AND end_time >= ?
     ORDER BY start_time ASC
-  `).all(dayEnd, dayStart);
+  `, [dayEnd, dayStart]);
 
   const freeSlots = gcal.computeFreeSlots(events, targetDate);
 
@@ -72,21 +72,21 @@ router.post("/suggest-slots", async (req, res) => {
   }
 });
 
-// POST /api/ai/schedule-day — generate full day plan
+// POST /api/ai/schedule-day
 router.post("/schedule-day", async (req, res) => {
   const date = req.body.date ?? new Date().toISOString().split("T")[0];
   const morningNote = req.body.morning_note ?? "";
 
-  const tasks = db.prepare("SELECT * FROM tasks WHERE status != 'Done' ORDER BY position ASC").all()
+  const tasks = (await dbAll("SELECT * FROM tasks WHERE status != 'Done' ORDER BY position ASC"))
     .map(t => ({ ...t, tags: safeParseJSON(t.tags, []) }));
 
   const dayStart = `${date}T00:00:00.000Z`;
   const dayEnd = `${date}T23:59:59.999Z`;
-  const events = db.prepare(`
+  const events = await dbAll(`
     SELECT * FROM calendar_events
     WHERE start_time <= ? AND end_time >= ?
     ORDER BY start_time ASC
-  `).all(dayEnd, dayStart);
+  `, [dayEnd, dayStart]);
 
   try {
     const plan = await openai.generateDayPlan({ date, tasks, events, morningNote });
@@ -97,13 +97,13 @@ router.post("/schedule-day", async (req, res) => {
   }
 });
 
-// POST /api/ai/checkin-response — generate accountability follow-up
+// POST /api/ai/checkin-response
 router.post("/checkin-response", async (req, res) => {
   const { task_id, task_title, outcome, notes = "" } = req.body;
 
   let title = task_title;
   if (!title && task_id) {
-    const task = db.prepare("SELECT title FROM tasks WHERE id = ?").get(task_id);
+    const task = await dbGet("SELECT title FROM tasks WHERE id = ?", [task_id]);
     title = task?.title ?? "Unknown task";
   }
 
@@ -118,28 +118,23 @@ router.post("/checkin-response", async (req, res) => {
   }
 });
 
-// POST /api/ai/evening-review — generate end-of-day review
+// POST /api/ai/evening-review
 router.post("/evening-review", async (req, res) => {
   const date = req.body.date ?? new Date().toISOString().split("T")[0];
 
-  const sessions = db.prepare(`
-    SELECT fs.*, t.title as task_title
-    FROM focus_sessions fs
-    LEFT JOIN tasks t ON fs.task_id = t.id
-    WHERE date(fs.started_at) = date(?) AND fs.ended_at IS NOT NULL
-  `).all(date);
-
-  const checkins = db.prepare(`
-    SELECT * FROM accountability_checkins WHERE date(prompted_at) = date(?)
-  `).all(date);
-
-  const completedCount = db.prepare(`
-    SELECT COUNT(*) as count FROM tasks
-    WHERE status = 'Done' AND date(updated_at) = date(?)
-  `).get(date).count;
+  const [sessions, checkins, completedRow] = await Promise.all([
+    dbAll(`
+      SELECT fs.*, t.title as task_title
+      FROM focus_sessions fs
+      LEFT JOIN tasks t ON fs.task_id = t.id
+      WHERE date(fs.started_at) = date(?) AND fs.ended_at IS NOT NULL
+    `, [date]),
+    dbAll("SELECT * FROM accountability_checkins WHERE date(prompted_at) = date(?)", [date]),
+    dbGet("SELECT COUNT(*) as count FROM tasks WHERE status = 'Done' AND date(updated_at) = date(?)", [date]),
+  ]);
 
   try {
-    const review = await openai.generateEveningReview({ date, sessions, checkins, completedCount });
+    const review = await openai.generateEveningReview({ date, sessions, checkins, completedCount: completedRow.count });
     res.json({ review });
   } catch (err) {
     console.error("evening-review error:", err.message);
@@ -149,16 +144,11 @@ router.post("/evening-review", async (req, res) => {
 
 router.post("/recover-block", async (req, res) => {
   const block = req.body.block_id
-    ? getTaskBlockById(req.body.block_id)
-    : latestUnresolvedMissedBlock(new Date());
+    ? await getTaskBlockById(req.body.block_id)
+    : await latestUnresolvedMissedBlock(new Date());
 
-  if (!block) {
-    return res.status(404).json({ error: "Missed block not found" });
-  }
-
-  if (!block.task_id) {
-    return res.status(400).json({ error: "Missed block is not linked to a task" });
-  }
+  if (!block) return res.status(404).json({ error: "Missed block not found" });
+  if (!block.task_id) return res.status(400).json({ error: "Missed block is not linked to a task" });
 
   try {
     const recommendation = await openai.recoverMissedBlock({
@@ -181,7 +171,7 @@ router.post("/recover-block", async (req, res) => {
 });
 
 router.post("/task-breakdown", async (req, res) => {
-  const task = taskFromRequest(req.body.task_id, req.body);
+  const task = await taskFromRequest(req.body.task_id, req.body);
   if (!task || !task.title?.trim()) {
     return res.status(400).json({ error: "task_id or title required" });
   }
@@ -195,8 +185,8 @@ router.post("/task-breakdown", async (req, res) => {
     const steps = normalizeStepList(result.steps);
 
     if (req.body.task_id) {
-      const firstStep = steps[0] ?? ""
-      db.prepare(`
+      const firstStep = steps[0] ?? "";
+      await dbRun(`
         UPDATE tasks
         SET breakdown_json = ?,
             current_subtask_index = 0,
@@ -204,7 +194,7 @@ router.post("/task-breakdown", async (req, res) => {
             current_sprint_goal = ?,
             updated_at = datetime('now')
         WHERE id = ?
-      `).run(JSON.stringify(steps), firstStep, firstStep, req.body.task_id);
+      `, [JSON.stringify(steps), firstStep, firstStep, req.body.task_id]);
     }
 
     res.json({ steps });
@@ -215,7 +205,7 @@ router.post("/task-breakdown", async (req, res) => {
 });
 
 router.post("/task-next-step", async (req, res) => {
-  const task = taskFromRequest(req.body.task_id, req.body);
+  const task = await taskFromRequest(req.body.task_id, req.body);
   if (!task || !task.title?.trim()) {
     return res.status(400).json({ error: "task_id or title required" });
   }
@@ -236,11 +226,10 @@ router.post("/task-next-step", async (req, res) => {
     });
 
     if (req.body.task_id) {
-      db.prepare(`
-        UPDATE tasks
-        SET next_step = ?, updated_at = datetime('now')
-        WHERE id = ?
-      `).run(result.next_step ?? "", req.body.task_id);
+      await dbRun(
+        "UPDATE tasks SET next_step = ?, updated_at = datetime('now') WHERE id = ?",
+        [result.next_step ?? "", req.body.task_id]
+      );
     }
 
     res.json({ next_step: result.next_step ?? "" });
@@ -251,7 +240,7 @@ router.post("/task-next-step", async (req, res) => {
 });
 
 router.post("/sprint-goal", async (req, res) => {
-  const task = taskFromRequest(req.body.task_id, req.body);
+  const task = await taskFromRequest(req.body.task_id, req.body);
   if (!task || !task.title?.trim()) {
     return res.status(400).json({ error: "task_id or title required" });
   }
@@ -271,11 +260,10 @@ router.post("/sprint-goal", async (req, res) => {
     });
 
     if (req.body.task_id) {
-      db.prepare(`
-        UPDATE tasks
-        SET current_sprint_goal = ?, updated_at = datetime('now')
-        WHERE id = ?
-      `).run(result.goal ?? "", req.body.task_id);
+      await dbRun(
+        "UPDATE tasks SET current_sprint_goal = ?, updated_at = datetime('now') WHERE id = ?",
+        [result.goal ?? "", req.body.task_id]
+      );
     }
 
     res.json({ goal: result.goal ?? "" });
@@ -285,7 +273,7 @@ router.post("/sprint-goal", async (req, res) => {
   }
 });
 
-// POST /api/ai/organize-calendar — schedule all pending tasks into today's free slots
+// POST /api/ai/organize-calendar
 router.post("/organize-calendar", async (req, res) => {
   const {
     date,
@@ -296,29 +284,26 @@ router.post("/organize-calendar", async (req, res) => {
   } = req.body;
 
   const targetDate = date ?? new Date().toISOString().split("T")[0];
+  const dayStart = `${targetDate}T00:00:00.000Z`;
+  const dayEnd = `${targetDate}T23:59:59.999Z`;
 
-  // Get all pending tasks for this date (scheduled_date matches OR null = today)
-  const allPending = db.prepare(`
+  const allPending = (await dbAll(`
     SELECT * FROM tasks
     WHERE status != 'Done'
     AND (scheduled_date = ? OR scheduled_date IS NULL)
     ORDER BY position ASC
-  `).all(targetDate).map(t => ({ ...t, tags: safeParseJSON(t.tags, []) }));
+  `, [targetDate])).map(t => ({ ...t, tags: safeParseJSON(t.tags, []) }));
 
   if (allPending.length === 0) {
     return res.json({ blocks: [], unscheduled: [], summary: "No pending tasks to schedule.", events: [] });
   }
 
-  // Get existing events for the day
-  const dayStart = `${targetDate}T00:00:00.000Z`;
-  const dayEnd = `${targetDate}T23:59:59.999Z`;
-  const existingEvents = db.prepare(`
+  const existingEvents = await dbAll(`
     SELECT * FROM calendar_events
     WHERE start_time <= ? AND end_time >= ?
     ORDER BY start_time ASC
-  `).all(dayEnd, dayStart);
+  `, [dayEnd, dayStart]);
 
-  // Compute free slots
   const freeSlots = gcal.computeFreeSlots(existingEvents, targetDate, work_start, work_end);
 
   try {
@@ -336,40 +321,37 @@ router.post("/organize-calendar", async (req, res) => {
     // Remove existing task_block events for these tasks on this date
     const taskIds = allPending.map(t => t.id);
     for (const taskId of taskIds) {
-      const existing = db.prepare(`
+      const existing = await dbGet(`
         SELECT id FROM calendar_events
         WHERE event_type = 'task_block'
           AND start_time >= ? AND start_time <= ?
           AND id IN (SELECT calendar_event_id FROM tasks WHERE id = ?)
-      `).get(dayStart, dayEnd, taskId);
+      `, [dayStart, dayEnd, taskId]);
       if (existing) {
-        db.prepare("DELETE FROM calendar_events WHERE id = ?").run(existing.id);
+        await dbRun("DELETE FROM calendar_events WHERE id = ?", [existing.id]);
       }
     }
 
-    // Create calendar events for each scheduled block
     const createdEvents = [];
-    const crypto = require("crypto");
-
     for (const block of result.blocks ?? []) {
       const eventId = crypto.randomUUID();
       const task = allPending.find(t => t.id === block.task_id);
       const title = block.title ?? task?.title ?? "Task block";
 
-      db.prepare(`
+      await dbRun(`
         INSERT OR REPLACE INTO calendar_events
           (id, google_event_id, google_cal_id, title, description, start_time, end_time, event_type, task_id, block_state, color, color_id, synced_at)
-        VALUES
-          (?, NULL, 'primary', ?, ?, ?, ?, 'task_block', ?, 'scheduled', 'indigo', 'blueberry', datetime('now'))
-      `).run(eventId, title, task?.description ?? "", block.start_time, block.end_time, block.task_id ?? null);
+        VALUES (?, NULL, 'primary', ?, ?, ?, ?, 'task_block', ?, 'scheduled', 'indigo', 'blueberry', datetime('now'))
+      `, [eventId, title, task?.description ?? "", block.start_time, block.end_time, block.task_id ?? null]);
 
-      // Link first block to task
       if (block.task_id && (!block.split_part || block.split_part === 1)) {
-        db.prepare("UPDATE tasks SET calendar_event_id = ?, updated_at = datetime('now') WHERE id = ?")
-          .run(eventId, block.task_id);
+        await dbRun(
+          "UPDATE tasks SET calendar_event_id = ?, updated_at = datetime('now') WHERE id = ?",
+          [eventId, block.task_id]
+        );
       }
 
-      createdEvents.push(db.prepare("SELECT * FROM calendar_events WHERE id = ?").get(eventId));
+      createdEvents.push(await dbGet("SELECT * FROM calendar_events WHERE id = ?", [eventId]));
     }
 
     res.json({

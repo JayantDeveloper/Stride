@@ -1,8 +1,8 @@
-// routes/tasks.js — full task CRUD with SQLite
+// routes/tasks.js — full task CRUD with Turso/libsql
 
 const express = require("express");
 const crypto = require("crypto");
-const db = require("../db/database");
+const { dbGet, dbAll, dbRun } = require("../db/database");
 const gcal = require("../services/googleCalendar");
 
 const router = express.Router();
@@ -12,7 +12,7 @@ const ALLOWED_FIELDS = ["title", "description", "status", "priority", "difficult
   "current_subtask_index", "current_sprint_goal", "position", "calendar_event_id"];
 
 // GET /api/tasks
-router.get("/", (req, res) => {
+router.get("/", async (req, res) => {
   let query = "SELECT * FROM tasks";
   const params = [];
   const conditions = [];
@@ -28,16 +28,15 @@ router.get("/", (req, res) => {
   if (conditions.length) query += " WHERE " + conditions.join(" AND ");
   query += " ORDER BY position ASC, created_at ASC";
 
-  const tasks = db.prepare(query).all(...params);
-  // Parse tags JSON for each task
+  const tasks = await dbAll(query, params);
   const parsed = tasks.map(t => ({ ...t, tags: safeParseJSON(t.tags, []) }));
   res.json({ tasks: parsed });
 });
 
 // POST /api/tasks
-router.post("/", (req, res) => {
+router.post("/", async (req, res) => {
   const id = crypto.randomUUID();
-  const maxPos = db.prepare("SELECT MAX(position) as m FROM tasks").get();
+  const maxPos = await dbGet("SELECT MAX(position) as m FROM tasks");
   const position = (maxPos?.m ?? 0) + 1;
 
   const task = {
@@ -59,27 +58,30 @@ router.post("/", (req, res) => {
     calendar_event_id: null,
   };
 
-  db.prepare(`
+  await dbRun(`
     INSERT INTO tasks (id, title, description, status, priority, difficulty,
-      estimated_mins, due_date, scheduled_date, tags, next_step, breakdown_json, current_subtask_index, current_sprint_goal, position, calendar_event_id)
-    VALUES (@id, @title, @description, @status, @priority, @difficulty,
-      @estimated_mins, @due_date, @scheduled_date, @tags, @next_step, @breakdown_json, @current_subtask_index, @current_sprint_goal, @position, @calendar_event_id)
-  `).run(task);
+      estimated_mins, due_date, scheduled_date, tags, next_step, breakdown_json,
+      current_subtask_index, current_sprint_goal, position, calendar_event_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [task.id, task.title, task.description, task.status, task.priority, task.difficulty,
+      task.estimated_mins, task.due_date, task.scheduled_date, task.tags, task.next_step,
+      task.breakdown_json, task.current_subtask_index, task.current_sprint_goal,
+      task.position, task.calendar_event_id]);
 
-  const created = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
+  const created = await dbGet("SELECT * FROM tasks WHERE id = ?", [id]);
   res.status(201).json({ task: { ...created, tags: safeParseJSON(created.tags, []) } });
 });
 
 // GET /api/tasks/:id
-router.get("/:id", (req, res) => {
-  const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id);
+router.get("/:id", async (req, res) => {
+  const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [req.params.id]);
   if (!task) return res.status(404).json({ error: "Task not found" });
   res.json({ task: { ...task, tags: safeParseJSON(task.tags, []) } });
 });
 
 // PATCH /api/tasks/:id
 router.patch("/:id", async (req, res) => {
-  const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id);
+  const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [req.params.id]);
   if (!task) return res.status(404).json({ error: "Task not found" });
 
   const updates = [];
@@ -97,13 +99,13 @@ router.patch("/:id", async (req, res) => {
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
 
-  db.prepare(`UPDATE tasks SET ${updates.join(", ")} WHERE id = ?`).run(...params);
+  await dbRun(`UPDATE tasks SET ${updates.join(", ")} WHERE id = ?`, params);
 
-  const updated = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id);
+  const updated = await dbGet("SELECT * FROM tasks WHERE id = ?", [req.params.id]);
 
   // Auto-sync linked calendar event when title, duration, or status changes
   if (updated.calendar_event_id && ("title" in req.body || "estimated_mins" in req.body || "status" in req.body)) {
-    const ev = db.prepare("SELECT * FROM calendar_events WHERE id = ?").get(updated.calendar_event_id);
+    const ev = await dbGet("SELECT * FROM calendar_events WHERE id = ?", [updated.calendar_event_id]);
     if (ev) {
       const calUpdates = {};
       if ("title" in req.body) calUpdates.title = updated.title;
@@ -122,11 +124,12 @@ router.patch("/:id", async (req, res) => {
 
       if (Object.keys(calUpdates).length > 0) {
         const setClauses = Object.keys(calUpdates).map(k => `${k} = ?`).join(", ");
-        db.prepare(`UPDATE calendar_events SET ${setClauses}, synced_at = datetime('now') WHERE id = ?`)
-          .run(...Object.values(calUpdates), updated.calendar_event_id);
+        await dbRun(
+          `UPDATE calendar_events SET ${setClauses}, synced_at = datetime('now') WHERE id = ?`,
+          [...Object.values(calUpdates), updated.calendar_event_id]
+        );
 
-        // Push title/time to Google Calendar (best-effort, don't await blocking response)
-        const gcalConnected = !!db.prepare("SELECT id FROM google_credentials WHERE id = 1").get();
+        const gcalConnected = !!(await dbGet("SELECT id FROM google_credentials WHERE id = 1"));
         if (ev.google_event_id && gcalConnected && (calUpdates.title !== undefined || calUpdates.end_time !== undefined)) {
           gcal.updateEvent(ev.google_event_id, {
             title: calUpdates.title ?? ev.title,
@@ -139,13 +142,13 @@ router.patch("/:id", async (req, res) => {
   }
 
   if ("status" in req.body && updated.status === "Done") {
-    db.prepare(`
+    await dbRun(`
       UPDATE calendar_events
       SET block_state = 'done',
           event_type = CASE WHEN event_type = 'task_block' THEN 'completed' ELSE event_type END,
           synced_at = datetime('now')
       WHERE task_id = ?
-    `).run(updated.id);
+    `, [updated.id]);
   }
 
   res.json({ task: { ...updated, tags: safeParseJSON(updated.tags, []) } });
@@ -153,24 +156,23 @@ router.patch("/:id", async (req, res) => {
 
 // DELETE /api/tasks/:id
 router.delete("/:id", async (req, res) => {
-  const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id);
+  const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [req.params.id]);
   if (!task) return res.status(404).json({ error: "Task not found" });
 
-  // Remove linked calendar event first
   if (task.calendar_event_id) {
-    const ev = db.prepare("SELECT * FROM calendar_events WHERE id = ?").get(task.calendar_event_id);
+    const ev = await dbGet("SELECT * FROM calendar_events WHERE id = ?", [task.calendar_event_id]);
     if (ev) {
-      const gcalConnected = !!db.prepare("SELECT id FROM google_credentials WHERE id = 1").get();
+      const gcalConnected = !!(await dbGet("SELECT id FROM google_credentials WHERE id = 1"));
       if (ev.google_event_id && gcalConnected) {
         try { await gcal.deleteEvent(ev.google_event_id); } catch (e) {
           console.error("GCal delete failed:", e.message);
         }
       }
-      db.prepare("DELETE FROM calendar_events WHERE id = ?").run(ev.id);
+      await dbRun("DELETE FROM calendar_events WHERE id = ?", [ev.id]);
     }
   }
 
-  db.prepare("DELETE FROM tasks WHERE id = ?").run(req.params.id);
+  await dbRun("DELETE FROM tasks WHERE id = ?", [req.params.id]);
   res.json({ ok: true });
 });
 
