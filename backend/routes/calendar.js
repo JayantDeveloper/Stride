@@ -5,6 +5,16 @@ const crypto = require("crypto");
 const { dbGet, dbAll, dbRun } = require("../db/database");
 const gcal = require("../services/googleCalendar");
 const {
+  dateStr,
+  localISO,
+  snapTo30,
+  buildSchedulingWindows,
+  toOccupiedIntervals,
+  addOccupiedInterval,
+  findSolidSlot,
+  findNextSplitChunk,
+} = require("../services/calendarOrganizer");
+const {
   latestUnresolvedMissedBlock,
   dismissMissedBlock,
   rescheduleBlock,
@@ -213,10 +223,11 @@ router.delete("/events/:id", async (req, res) => {
 
 // POST /api/calendar/organize — deterministic task-to-calendar scheduling
 router.post("/organize", async (req, res) => {
+  const todayKey = dateStr(new Date());
   const start_from_now = req.body.start_from_now ?? false;
   const date = start_from_now
-    ? new Date().toISOString().split("T")[0]
-    : (req.body.date ?? new Date().toISOString().split("T")[0]);
+    ? todayKey
+    : (req.body.date ?? todayKey);
 
   const PRIORITY_RANK = { Urgent: 0, High: 1, Medium: 2, Low: 3 };
   const SLEEP_HOUR = 23;
@@ -230,58 +241,6 @@ router.post("/organize", async (req, res) => {
   };
 
   function pad(n) { return String(n).padStart(2, "0"); }
-  function dateStr(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
-  function localISO(d) { return `${dateStr(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`; }
-
-  function snapTo30(d) {
-    const r = new Date(d);
-    r.setSeconds(0, 0);
-    const m = r.getMinutes();
-    const snapped = Math.ceil(m / 30) * 30;
-    if (snapped >= 60) { r.setMinutes(0); r.setHours(r.getHours() + 1); }
-    else { r.setMinutes(snapped); }
-    return r;
-  }
-
-  const SPLIT_MARGIN_MS = 5 * 60_000; // 5 minutes
-
-  // Advance cursor past any event it currently overlaps (solid mode — snap to 30-min after event)
-  function advancePastExternal(cursor, events) {
-    let cur = new Date(cursor);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const ev of events) {
-        const s = new Date(ev.start_time);
-        const e = new Date(ev.end_time);
-        if (cur >= s && cur < e) {
-          cur = snapTo30(e);
-          changed = true;
-          break;
-        }
-      }
-    }
-    return cur;
-  }
-
-  // Advance cursor past any event it currently overlaps (split mode — 5-min margin after event)
-  function advancePastExternalSplit(cursor, events) {
-    let cur = new Date(cursor);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const ev of events) {
-        const s = new Date(ev.start_time);
-        const e = new Date(ev.end_time);
-        if (cur >= s && cur < e) {
-          cur = new Date(e.getTime() + SPLIT_MARGIN_MS);
-          changed = true;
-          break;
-        }
-      }
-    }
-    return cur;
-  }
 
   try {
     const gcalConnected = !!(await dbGet("SELECT id FROM google_credentials WHERE id = 1"));
@@ -292,38 +251,44 @@ router.post("/organize", async (req, res) => {
       return pd !== 0 ? pd : (a.position ?? 0) - (b.position ?? 0);
     });
 
+    if (allTasks.length === 0) {
+      return res.json({ scheduled: [], unscheduled: [] });
+    }
+
     const dateObj = new Date(date + "T00:00:00");
     const nextDateObj = new Date(dateObj);
     nextDateObj.setDate(nextDateObj.getDate() + 1);
     const nextDateStr = dateStr(nextDateObj);
 
-    const externalEvents = await dbAll(`
+    const candidateEvents = await dbAll(`
       SELECT * FROM calendar_events
-      WHERE event_type = 'external'
-      AND (date(start_time) = ? OR date(start_time) = ?)
+      WHERE date(start_time) <= ?
+      AND date(end_time) >= ?
       ORDER BY start_time ASC
-    `, [date, nextDateStr]);
+    `, [nextDateStr, date]);
 
-    const usedHexes = new Set(externalEvents.map(e => {
+    const usedHexes = new Set(candidateEvents.map(e => {
       if (e.color?.startsWith("#")) return e.color;
       return GCAL_COLOR_HEX[e.color_id] ?? null;
     }).filter(Boolean));
     const taskColor = TASK_BLOCK_COLORS.find(c => !usedHexes.has(c)) ?? TASK_BLOCK_COLORS[0];
 
-    const nowISO = new Date().toISOString();
-    const oldBlocks = start_from_now
-      ? await dbAll(`
-          SELECT * FROM calendar_events
-          WHERE event_type IN ('task_block', 'completed')
-          AND (date(start_time) = ? OR date(start_time) = ?)
-          AND start_time >= ?
-        `, [date, nextDateStr, nowISO])
-      : await dbAll(`
-          SELECT * FROM calendar_events
-          WHERE event_type IN ('task_block', 'completed')
-          AND (date(start_time) = ? OR date(start_time) = ?)
-        `, [date, nextDateStr]);
+    const now = new Date();
+    const nowMs = now.getTime();
+    const oldBlocks = (await dbAll(`
+      SELECT * FROM calendar_events
+      WHERE event_type IN ('task_block', 'completed')
+      AND date(start_time) <= ?
+      AND date(end_time) >= ?
+      ORDER BY start_time ASC
+    `, [nextDateStr, date]))
+      .filter((ev) => {
+        if (!start_from_now) return true;
+        const eventStartMs = new Date(ev.start_time).getTime();
+        return !Number.isNaN(eventStartMs) && eventStartMs >= nowMs;
+      });
 
+    const deletedBlockIds = new Set();
     for (const ev of oldBlocks) {
       if (ev.google_event_id && gcalConnected) {
         try { await gcal.deleteEvent(ev.google_event_id); } catch (_) {}
@@ -333,104 +298,63 @@ router.post("/organize", async (req, res) => {
         "UPDATE tasks SET calendar_event_id = NULL, updated_at = datetime('now') WHERE calendar_event_id = ?",
         [ev.id]
       );
+      deletedBlockIds.add(ev.id);
     }
 
-    const today = dateStr(new Date());
-    let cursor;
+    let organizingStart;
     if (start_from_now) {
-      cursor = snapTo30(new Date());
-      if (dateStr(cursor) !== date) {
-        cursor = new Date(`${nextDateStr}T${pad(OVERFLOW_HOUR)}:00:00`);
+      organizingStart = snapTo30(new Date());
+      if (dateStr(organizingStart) !== date) {
+        organizingStart = new Date(`${nextDateStr}T${pad(OVERFLOW_HOUR)}:00:00`);
       }
-    } else if (date === today) {
-      cursor = snapTo30(new Date());
-      if (dateStr(cursor) !== date) {
-        cursor = new Date(`${nextDateStr}T${pad(OVERFLOW_HOUR)}:00:00`);
+    } else if (date === todayKey) {
+      organizingStart = snapTo30(new Date());
+      if (dateStr(organizingStart) !== date) {
+        organizingStart = new Date(`${nextDateStr}T${pad(OVERFLOW_HOUR)}:00:00`);
       }
     } else {
-      cursor = new Date(`${date}T${pad(OVERFLOW_HOUR)}:00:00`);
+      organizingStart = new Date(`${date}T${pad(OVERFLOW_HOUR)}:00:00`);
     }
+
+    const windows = buildSchedulingWindows({
+      date,
+      nextDate: nextDateStr,
+      startAt: organizingStart,
+      dayStartHour: OVERFLOW_HOUR,
+      dayEndHour: SLEEP_HOUR,
+    });
+
+    if (windows.length === 0) {
+      return res.json({ scheduled: [], unscheduled: allTasks.map((task) => task.id) });
+    }
+
+    const horizonStart = windows[0].start;
+    const horizonEnd = windows[windows.length - 1].end;
+    const occupiedIntervals = toOccupiedIntervals(
+      candidateEvents.filter((event) => !deletedBlockIds.has(event.id)),
+      horizonStart,
+      horizonEnd
+    );
 
     const scheduled = [];
     const unscheduled = [];
 
     for (const task of allTasks) {
-      let remaining = task.estimated_mins ?? 30;
+      let remaining = Math.max(1, task.estimated_mins ?? 30);
       const taskBlockIds = [];
-
       const taskSplit = !!(task.allow_split);
 
-      while (remaining > 0) {
-        // Advance cursor past any event it currently sits inside
-        cursor = taskSplit
-          ? advancePastExternalSplit(cursor, externalEvents)
-          : advancePastExternal(cursor, externalEvents);
-
-        let curDate = dateStr(cursor);
-        const sleep = new Date(`${curDate}T${pad(SLEEP_HOUR)}:00:00`);
-        if (cursor >= sleep) {
-          const next = new Date(cursor);
-          next.setDate(next.getDate() + 1);
-          curDate = dateStr(next);
-          cursor = new Date(`${curDate}T${pad(OVERFLOW_HOUR)}:00:00`);
-          cursor = taskSplit
-            ? advancePastExternalSplit(cursor, externalEvents)
-            : advancePastExternal(cursor, externalEvents);
-          const nextSleep = new Date(`${curDate}T${pad(SLEEP_HOUR)}:00:00`);
-          if (cursor >= nextSleep) { unscheduled.push(task); remaining = 0; break; }
-        }
-
-        const potentialEnd = new Date(cursor.getTime() + remaining * 60_000);
-
-        const blocking = externalEvents
-          .filter(ev => {
-            const evStart = new Date(ev.start_time);
-            if (taskSplit) {
-              // Split: find the next event that starts strictly after cursor
-              return evStart > cursor;
-            }
-            return evStart > cursor && evStart < potentialEnd;
-          })
-          .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))[0];
-
-        let blockEnd, minsScheduled;
-        if (blocking) {
-          if (!taskSplit) {
-            cursor = snapTo30(new Date(blocking.end_time));
-            continue;
-          }
-          // Split mode: measure usable gap before the next event (with 5-min margin)
-          const gapEnd = new Date(new Date(blocking.start_time).getTime() - SPLIT_MARGIN_MS);
-          const gapMs = gapEnd.getTime() - cursor.getTime();
-          const MIN_GAP_MS = 20 * 60_000; // gaps under 20 min are not worth using
-          if (gapMs < MIN_GAP_MS) {
-            cursor = new Date(new Date(blocking.end_time).getTime() + SPLIT_MARGIN_MS);
-            continue;
-          }
-          // Cap chunk to remaining work so we don't overshoot
-          minsScheduled = Math.min(Math.floor(gapMs / 60_000), remaining);
-          blockEnd = new Date(cursor.getTime() + minsScheduled * 60_000);
-        } else {
-          blockEnd = potentialEnd;
-          minsScheduled = remaining;
-        }
-
-        const sleepMs = new Date(`${dateStr(cursor)}T${pad(SLEEP_HOUR)}:00:00`).getTime();
-        if (blockEnd.getTime() > sleepMs) {
-          blockEnd = new Date(sleepMs);
-          minsScheduled = Math.round((blockEnd.getTime() - cursor.getTime()) / 60_000);
-        }
-
-        if (minsScheduled <= 0) { cursor = sleep; continue; }
-
-        const startISO = localISO(cursor);
-        const endISO = localISO(blockEnd);
+      const persistScheduledBlock = async (slotStart, slotEnd) => {
+        const startISO = localISO(slotStart);
+        const endISO = localISO(slotEnd);
 
         let eventId = crypto.randomUUID();
+        let googleEventId = null;
         if (gcalConnected) {
           try {
             const gEv = await gcal.createEvent({ title: task.title, startTime: startISO, endTime: endISO });
             eventId = gEv.id;
+            googleEventId = gEv.id;
           } catch (e) {
             console.error("GCal create failed:", e.message);
           }
@@ -440,16 +364,45 @@ router.post("/organize", async (req, res) => {
           INSERT INTO calendar_events
             (id, google_event_id, google_cal_id, title, description, start_time, end_time, event_type, task_id, block_state, color, synced_at)
           VALUES (?, ?, 'primary', ?, '', ?, ?, 'task_block', ?, 'scheduled', ?, datetime('now'))
-        `, [eventId, gcalConnected ? eventId : null, task.title, startISO, endISO, task.id, taskColor]);
+        `, [eventId, googleEventId, task.title, startISO, endISO, task.id, taskColor]);
 
         taskBlockIds.push(eventId);
         scheduled.push({ id: eventId, task_id: task.id, title: task.title, start_time: startISO, end_time: endISO });
+        addOccupiedInterval(occupiedIntervals, { start: slotStart, end: slotEnd });
+      };
 
-        remaining -= minsScheduled;
-        cursor = blockEnd;
+      if (!taskSplit) {
+        const slot = findSolidSlot({
+          occupiedIntervals,
+          windows,
+          startAt: organizingStart,
+          durationMins: remaining,
+        });
 
-        if (taskSplit && blocking && remaining > 0) {
-          cursor = new Date(new Date(blocking.end_time).getTime() + SPLIT_MARGIN_MS);
+        if (!slot) {
+          unscheduled.push(task);
+        } else {
+          await persistScheduledBlock(slot.start, slot.end);
+        }
+      } else {
+        let searchCursor = new Date(organizingStart);
+
+        while (remaining > 0) {
+          const chunk = findNextSplitChunk({
+            occupiedIntervals,
+            windows,
+            startAt: searchCursor,
+            remainingMins: remaining,
+          });
+
+          if (!chunk) {
+            unscheduled.push(task);
+            break;
+          }
+
+          await persistScheduledBlock(chunk.start, chunk.end);
+          remaining -= chunk.minsScheduled;
+          searchCursor = chunk.resumeAt;
         }
       }
 

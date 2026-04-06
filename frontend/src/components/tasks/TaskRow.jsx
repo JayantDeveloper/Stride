@@ -455,7 +455,7 @@ export function TaskRow({
       <Cell col="split" border className="transition-colors hover:bg-notion-hover">
         <button
           type="button"
-          title={task.allow_split ? 'Split: task can be broken across gaps (5-min margins)' : 'Solid: task placed as one uninterrupted block'}
+          title={task.allow_split ? 'Split: task can be broken across gaps (4-min margins)' : 'Solid: task placed as one uninterrupted block'}
           onClick={() => onFieldSave?.(task.id, 'allow_split', task.allow_split ? 0 : 1)}
           className="w-full text-xs font-medium rounded px-1 py-0.5 transition-colors"
           style={{
