@@ -36,6 +36,7 @@ export const COL = {
   difficulty: { width: 110, flex: false },
   duration:   { width: 90,  flex: false },
   due:        { width: 90,  flex: false },
+  split:      { width: 64,  flex: false },
   actions:    { width: 56,  flex: false },
 }
 
@@ -450,6 +451,22 @@ export function TaskRow({
         )}
       </Cell>
 
+      {/* Split / Solid */}
+      <Cell col="split" border className="transition-colors hover:bg-notion-hover">
+        <button
+          type="button"
+          title={task.allow_split ? 'Split: task can be broken across gaps (5-min margins)' : 'Solid: task placed as one uninterrupted block'}
+          onClick={() => onFieldSave?.(task.id, 'allow_split', task.allow_split ? 0 : 1)}
+          className="w-full text-xs font-medium rounded px-1 py-0.5 transition-colors"
+          style={{
+            background: task.allow_split ? 'rgba(99,102,241,0.15)' : 'rgba(107,114,128,0.10)',
+            color: task.allow_split ? '#818CF8' : '#6B7280',
+          }}
+        >
+          {task.allow_split ? 'Split' : 'Solid'}
+        </button>
+      </Cell>
+
       {/* Actions */}
       <Cell col="actions" border={false} className="transition-colors hover:bg-notion-hover">
         <div className="flex items-center gap-0.5">
@@ -471,6 +488,7 @@ export function TaskListHeader() {
     { col: 'difficulty', label: 'Difficulty' },
     { col: 'duration',   label: 'Time' },
     { col: 'due',        label: 'Due Date' },
+    { col: 'split',      label: 'Cal' },
     { col: 'actions',    label: '' },
   ]
   return (

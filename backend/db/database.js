@@ -156,6 +156,7 @@ async function initializeSchema() {
     ["breakdown_json", "TEXT DEFAULT ''"],
     ["current_subtask_index", "INTEGER NOT NULL DEFAULT 0"],
     ["current_sprint_goal", "TEXT DEFAULT ''"],
+    ["allow_split", "INTEGER NOT NULL DEFAULT 0"],
   ]);
 
   await ensureColumns("calendar_events", [

@@ -53,7 +53,6 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
   const [showOrganize, setShowOrganize] = useState(false)
   const [organizeDate, setOrganizeDate] = useState(todayISO())
   const [organizeFromNow, setOrganizeFromNow] = useState(true)
-  const [organizeSplit, setOrganizeSplit] = useState(false)
 
   // Pomodoro mode (reported by ExecutionPomodoro via onModeChange)
   const [pomodoroMode, setPomodoroMode] = useState({ isBreak: false, isRunning: false })
@@ -163,7 +162,7 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
 
   async function handleOrganize() {
     try {
-      const data = await organize({ date: organizeDate, start_from_now: organizeFromNow, allow_split: organizeSplit })
+      const data = await organize({ date: organizeDate, start_from_now: organizeFromNow })
       const n = data.scheduled?.length ?? 0
       addToast(`Scheduled ${n} block${n !== 1 ? 's' : ''} on calendar`, 'success')
     } catch (err) {
@@ -446,15 +445,6 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
                 disabled={organizeFromNow}
                 onChange={e => setOrganizeDate(e.target.value)}
               />
-              <label className="flex items-center gap-1.5 ml-2 cursor-pointer" title="Allow tasks to be split across multiple blocks if a meeting blocks the way">
-                <input
-                  type="checkbox"
-                  checked={organizeSplit}
-                  onChange={e => setOrganizeSplit(e.target.checked)}
-                  className="accent-indigo-500"
-                />
-                <span className="text-xs text-notion-muted">Split tasks</span>
-              </label>
               <div className="flex-1" />
               <Button variant="primary" size="sm" onClick={handleOrganize} disabled={organizing}>
                 {organizing ? <><Spinner size="sm" /> Scheduling...</> : 'Push'}

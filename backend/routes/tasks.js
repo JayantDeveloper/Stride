@@ -9,7 +9,7 @@ const router = express.Router();
 
 const ALLOWED_FIELDS = ["title", "description", "status", "priority", "difficulty",
   "estimated_mins", "due_date", "scheduled_date", "tags", "next_step", "breakdown_json",
-  "current_subtask_index", "current_sprint_goal", "position", "calendar_event_id"];
+  "current_subtask_index", "current_sprint_goal", "position", "calendar_event_id", "allow_split"];
 
 // GET /api/tasks
 router.get("/", async (req, res) => {
