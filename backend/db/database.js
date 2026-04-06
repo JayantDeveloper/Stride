@@ -6,10 +6,12 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 
-const DB_PATH = path.join(__dirname, "..", "data", "focusexec.db");
+const dataDir = process.env.NODE_ENV === "production"
+  ? "/data"
+  : path.join(__dirname, "..", "data");
+const DB_PATH = path.join(dataDir, "focusexec.db");
 
 // Ensure the data directory exists
-const dataDir = path.join(__dirname, "..", "data");
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 const db = new Database(DB_PATH);
