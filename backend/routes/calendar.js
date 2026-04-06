@@ -214,6 +214,7 @@ router.delete("/events/:id", async (req, res) => {
 // POST /api/calendar/organize — deterministic task-to-calendar scheduling
 router.post("/organize", async (req, res) => {
   const start_from_now = req.body.start_from_now ?? false;
+  const allow_split = req.body.allow_split ?? false;
   const date = start_from_now
     ? new Date().toISOString().split("T")[0]
     : (req.body.date ?? new Date().toISOString().split("T")[0]);
@@ -243,6 +244,9 @@ router.post("/organize", async (req, res) => {
     return r;
   }
 
+  const SPLIT_MARGIN_MS = 5 * 60_000; // 5 minutes
+
+  // Advance cursor past any event it currently overlaps (solid mode — snap to 30-min after event)
   function advancePastExternal(cursor, events) {
     let cur = new Date(cursor);
     let changed = true;
@@ -253,6 +257,25 @@ router.post("/organize", async (req, res) => {
         const e = new Date(ev.end_time);
         if (cur >= s && cur < e) {
           cur = snapTo30(e);
+          changed = true;
+          break;
+        }
+      }
+    }
+    return cur;
+  }
+
+  // Advance cursor past any event it currently overlaps (split mode — 5-min margin after event)
+  function advancePastExternalSplit(cursor, events) {
+    let cur = new Date(cursor);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const ev of events) {
+        const s = new Date(ev.start_time);
+        const e = new Date(ev.end_time);
+        if (cur >= s && cur < e) {
+          cur = new Date(e.getTime() + SPLIT_MARGIN_MS);
           changed = true;
           break;
         }
@@ -337,7 +360,10 @@ router.post("/organize", async (req, res) => {
       const taskBlockIds = [];
 
       while (remaining > 0) {
-        cursor = advancePastExternal(cursor, externalEvents);
+        // Advance cursor past any event it currently sits inside
+        cursor = allow_split
+          ? advancePastExternalSplit(cursor, externalEvents)
+          : advancePastExternal(cursor, externalEvents);
 
         let curDate = dateStr(cursor);
         const sleep = new Date(`${curDate}T${pad(SLEEP_HOUR)}:00:00`);
@@ -346,22 +372,42 @@ router.post("/organize", async (req, res) => {
           next.setDate(next.getDate() + 1);
           curDate = dateStr(next);
           cursor = new Date(`${curDate}T${pad(OVERFLOW_HOUR)}:00:00`);
-          cursor = advancePastExternal(cursor, externalEvents);
+          cursor = allow_split
+            ? advancePastExternalSplit(cursor, externalEvents)
+            : advancePastExternal(cursor, externalEvents);
           const nextSleep = new Date(`${curDate}T${pad(SLEEP_HOUR)}:00:00`);
           if (cursor >= nextSleep) { unscheduled.push(task); remaining = 0; break; }
         }
 
         const potentialEnd = new Date(cursor.getTime() + remaining * 60_000);
+
+        // Find the first external event that would overlap this task block
+        // In split mode use 5-min margin: event that starts within (cursor, potentialEnd + 5min)
         const blocking = externalEvents
-          .filter(ev => new Date(ev.start_time) > cursor && new Date(ev.start_time) < potentialEnd)
+          .filter(ev => {
+            const evStart = new Date(ev.start_time);
+            const evEnd = new Date(ev.end_time);
+            if (allow_split) {
+              // overlap if event starts before our block ends+margin OR ends after our block start
+              return evStart < new Date(potentialEnd.getTime() + SPLIT_MARGIN_MS) && evEnd > cursor;
+            }
+            return evStart > cursor && evStart < potentialEnd;
+          })
           .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))[0];
 
         let blockEnd, minsScheduled;
         if (blocking) {
-          blockEnd = new Date(blocking.start_time);
+          if (!allow_split) {
+            // Solid: skip past the entire blocking event and retry fitting the whole task
+            cursor = snapTo30(new Date(blocking.end_time));
+            continue;
+          }
+          // Split: end this chunk 5 min before the blocking event starts
+          blockEnd = new Date(new Date(blocking.start_time).getTime() - SPLIT_MARGIN_MS);
           minsScheduled = Math.round((blockEnd.getTime() - cursor.getTime()) / 60_000);
           if (minsScheduled < 10) {
-            cursor = snapTo30(new Date(blocking.end_time));
+            // Gap too small — skip past blocker with 5-min margin and retry
+            cursor = new Date(new Date(blocking.end_time).getTime() + SPLIT_MARGIN_MS);
             continue;
           }
         } else {
@@ -402,8 +448,9 @@ router.post("/organize", async (req, res) => {
         remaining -= minsScheduled;
         cursor = blockEnd;
 
-        if (blocking && remaining > 0) {
-          cursor = snapTo30(new Date(blocking.end_time));
+        // After placing a split chunk, advance past the blocker with margin before next chunk
+        if (allow_split && blocking && remaining > 0) {
+          cursor = new Date(new Date(blocking.end_time).getTime() + SPLIT_MARGIN_MS);
         }
       }
 
