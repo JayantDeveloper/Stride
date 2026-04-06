@@ -8,21 +8,25 @@ const {
   addOccupiedInterval,
   findSolidSlot,
   findNextSplitChunk,
+  parseCalendarDateTime,
 } = require("./calendarOrganizer");
 
+const TIME_ZONE = "America/New_York";
+
 test("solid tasks backfill the earliest open gap instead of inheriting a global cursor", () => {
-  const startAt = new Date("2026-04-06T08:00:00");
+  const startAt = parseCalendarDateTime("2026-04-06T08:00:00", TIME_ZONE);
   const windows = buildSchedulingWindows({
     date: "2026-04-06",
     nextDate: "2026-04-07",
     startAt,
     dayStartHour: 8,
     dayEndHour: 23,
+    timeZone: TIME_ZONE,
   });
 
   const occupied = toOccupiedIntervals([
     { id: "event-1", start_time: "2026-04-06T08:30:00", end_time: "2026-04-06T09:00:00" },
-  ], windows[0].start, windows[windows.length - 1].end);
+  ], windows[0].start, windows[windows.length - 1].end, TIME_ZONE);
 
   const largeTaskSlot = findSolidSlot({
     occupiedIntervals: occupied,
@@ -31,8 +35,8 @@ test("solid tasks backfill the earliest open gap instead of inheriting a global 
     durationMins: 90,
   });
 
-  assert.equal(localISO(largeTaskSlot.start), "2026-04-06T09:00:00");
-  assert.equal(localISO(largeTaskSlot.end), "2026-04-06T10:30:00");
+  assert.equal(localISO(largeTaskSlot.start, TIME_ZONE), "2026-04-06T09:00:00");
+  assert.equal(localISO(largeTaskSlot.end, TIME_ZONE), "2026-04-06T10:30:00");
 
   addOccupiedInterval(occupied, largeTaskSlot);
 
@@ -43,23 +47,24 @@ test("solid tasks backfill the earliest open gap instead of inheriting a global 
     durationMins: 30,
   });
 
-  assert.equal(localISO(smallTaskSlot.start), "2026-04-06T08:00:00");
-  assert.equal(localISO(smallTaskSlot.end), "2026-04-06T08:30:00");
+  assert.equal(localISO(smallTaskSlot.start, TIME_ZONE), "2026-04-06T08:00:00");
+  assert.equal(localISO(smallTaskSlot.end, TIME_ZONE), "2026-04-06T08:30:00");
 });
 
 test("spanning events from the previous day still block the next morning", () => {
-  const startAt = new Date("2026-04-06T08:00:00");
+  const startAt = parseCalendarDateTime("2026-04-06T08:00:00", TIME_ZONE);
   const windows = buildSchedulingWindows({
     date: "2026-04-06",
     nextDate: "2026-04-07",
     startAt,
     dayStartHour: 8,
     dayEndHour: 23,
+    timeZone: TIME_ZONE,
   });
 
   const occupied = toOccupiedIntervals([
     { id: "overnight", start_time: "2026-04-05T23:30:00", end_time: "2026-04-06T08:45:00" },
-  ], windows[0].start, windows[windows.length - 1].end);
+  ], windows[0].start, windows[windows.length - 1].end, TIME_ZONE);
 
   const slot = findSolidSlot({
     occupiedIntervals: occupied,
@@ -68,25 +73,26 @@ test("spanning events from the previous day still block the next morning", () =>
     durationMins: 30,
   });
 
-  assert.equal(localISO(slot.start), "2026-04-06T09:00:00");
-  assert.equal(localISO(slot.end), "2026-04-06T09:30:00");
+  assert.equal(localISO(slot.start, TIME_ZONE), "2026-04-06T09:00:00");
+  assert.equal(localISO(slot.end, TIME_ZONE), "2026-04-06T09:30:00");
 });
 
 test("split tasks use the earliest valid gaps and keep 4 minute buffers around events", () => {
-  const startAt = new Date("2026-04-06T08:00:00");
+  const startAt = parseCalendarDateTime("2026-04-06T08:00:00", TIME_ZONE);
   const windows = buildSchedulingWindows({
     date: "2026-04-06",
     nextDate: "2026-04-07",
     startAt,
     dayStartHour: 8,
     dayEndHour: 23,
+    timeZone: TIME_ZONE,
   });
 
   const occupied = toOccupiedIntervals([
     { id: "event-1", start_time: "2026-04-06T08:30:00", end_time: "2026-04-06T09:00:00" },
     { id: "event-2", start_time: "2026-04-06T10:00:00", end_time: "2026-04-06T10:20:00" },
     { id: "event-3", start_time: "2026-04-06T11:00:00", end_time: "2026-04-06T11:30:00" },
-  ], windows[0].start, windows[windows.length - 1].end);
+  ], windows[0].start, windows[windows.length - 1].end, TIME_ZONE);
 
   let remaining = 90;
 
@@ -97,9 +103,9 @@ test("split tasks use the earliest valid gaps and keep 4 minute buffers around e
     remainingMins: remaining,
   });
 
-  assert.equal(localISO(chunk1.start), "2026-04-06T08:00:00");
-  assert.equal(localISO(chunk1.end), "2026-04-06T08:26:00");
-  assert.equal(localISO(chunk1.resumeAt), "2026-04-06T09:04:00");
+  assert.equal(localISO(chunk1.start, TIME_ZONE), "2026-04-06T08:00:00");
+  assert.equal(localISO(chunk1.end, TIME_ZONE), "2026-04-06T08:26:00");
+  assert.equal(localISO(chunk1.resumeAt, TIME_ZONE), "2026-04-06T09:04:00");
 
   addOccupiedInterval(occupied, chunk1);
   remaining -= chunk1.minsScheduled;
@@ -111,9 +117,9 @@ test("split tasks use the earliest valid gaps and keep 4 minute buffers around e
     remainingMins: remaining,
   });
 
-  assert.equal(localISO(chunk2.start), "2026-04-06T09:04:00");
-  assert.equal(localISO(chunk2.end), "2026-04-06T09:56:00");
-  assert.equal(localISO(chunk2.resumeAt), "2026-04-06T10:24:00");
+  assert.equal(localISO(chunk2.start, TIME_ZONE), "2026-04-06T09:04:00");
+  assert.equal(localISO(chunk2.end, TIME_ZONE), "2026-04-06T09:56:00");
+  assert.equal(localISO(chunk2.resumeAt, TIME_ZONE), "2026-04-06T10:24:00");
 
   addOccupiedInterval(occupied, chunk2);
   remaining -= chunk2.minsScheduled;
@@ -125,25 +131,26 @@ test("split tasks use the earliest valid gaps and keep 4 minute buffers around e
     remainingMins: remaining,
   });
 
-  assert.equal(localISO(chunk3.start), "2026-04-06T10:24:00");
-  assert.equal(localISO(chunk3.end), "2026-04-06T10:36:00");
+  assert.equal(localISO(chunk3.start, TIME_ZONE), "2026-04-06T10:24:00");
+  assert.equal(localISO(chunk3.end, TIME_ZONE), "2026-04-06T10:36:00");
   assert.equal(chunk3.minsScheduled, 12);
 });
 
 test("split tasks do not skip a small earliest gap just because a larger one exists later", () => {
-  const startAt = new Date("2026-04-06T08:00:00");
+  const startAt = parseCalendarDateTime("2026-04-06T08:00:00", TIME_ZONE);
   const windows = buildSchedulingWindows({
     date: "2026-04-06",
     nextDate: "2026-04-07",
     startAt,
     dayStartHour: 8,
     dayEndHour: 23,
+    timeZone: TIME_ZONE,
   });
 
   const occupied = toOccupiedIntervals([
     { id: "event-1", start_time: "2026-04-06T08:10:00", end_time: "2026-04-06T08:20:00" },
     { id: "event-2", start_time: "2026-04-06T09:00:00", end_time: "2026-04-06T09:30:00" },
-  ], windows[0].start, windows[windows.length - 1].end);
+  ], windows[0].start, windows[windows.length - 1].end, TIME_ZONE);
 
   const chunk = findNextSplitChunk({
     occupiedIntervals: occupied,
@@ -152,8 +159,14 @@ test("split tasks do not skip a small earliest gap just because a larger one exi
     remainingMins: 60,
   });
 
-  assert.equal(localISO(chunk.start), "2026-04-06T08:00:00");
-  assert.equal(localISO(chunk.end), "2026-04-06T08:06:00");
+  assert.equal(localISO(chunk.start, TIME_ZONE), "2026-04-06T08:00:00");
+  assert.equal(localISO(chunk.end, TIME_ZONE), "2026-04-06T08:06:00");
   assert.equal(chunk.minsScheduled, 6);
-  assert.equal(localISO(chunk.resumeAt), "2026-04-06T08:24:00");
+  assert.equal(localISO(chunk.resumeAt, TIME_ZONE), "2026-04-06T08:24:00");
+});
+
+test("bare local timestamps are parsed in the calendar timezone rather than the server timezone", () => {
+  const parsed = parseCalendarDateTime("2026-04-06T08:00:00", TIME_ZONE);
+  assert.equal(parsed.toISOString(), "2026-04-06T12:00:00.000Z");
+  assert.equal(localISO(parsed, TIME_ZONE), "2026-04-06T08:00:00");
 });

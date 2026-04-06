@@ -5,8 +5,10 @@ const crypto = require("crypto");
 const { dbGet, dbAll, dbRun } = require("../db/database");
 const gcal = require("../services/googleCalendar");
 const {
+  shiftDateKey,
   dateStr,
   localISO,
+  parseCalendarDateTime,
   snapTo30,
   buildSchedulingWindows,
   toOccupiedIntervals,
@@ -255,10 +257,7 @@ router.post("/organize", async (req, res) => {
       return res.json({ scheduled: [], unscheduled: [] });
     }
 
-    const dateObj = new Date(date + "T00:00:00");
-    const nextDateObj = new Date(dateObj);
-    nextDateObj.setDate(nextDateObj.getDate() + 1);
-    const nextDateStr = dateStr(nextDateObj);
+    const nextDateStr = shiftDateKey(date, 1);
 
     const candidateEvents = await dbAll(`
       SELECT * FROM calendar_events
@@ -284,7 +283,7 @@ router.post("/organize", async (req, res) => {
     `, [nextDateStr, date]))
       .filter((ev) => {
         if (!start_from_now) return true;
-        const eventStartMs = new Date(ev.start_time).getTime();
+        const eventStartMs = parseCalendarDateTime(ev.start_time)?.getTime();
         return !Number.isNaN(eventStartMs) && eventStartMs >= nowMs;
       });
 
@@ -305,15 +304,15 @@ router.post("/organize", async (req, res) => {
     if (start_from_now) {
       organizingStart = snapTo30(new Date());
       if (dateStr(organizingStart) !== date) {
-        organizingStart = new Date(`${nextDateStr}T${pad(OVERFLOW_HOUR)}:00:00`);
+        organizingStart = parseCalendarDateTime(`${nextDateStr}T${pad(OVERFLOW_HOUR)}:00:00`);
       }
     } else if (date === todayKey) {
       organizingStart = snapTo30(new Date());
       if (dateStr(organizingStart) !== date) {
-        organizingStart = new Date(`${nextDateStr}T${pad(OVERFLOW_HOUR)}:00:00`);
+        organizingStart = parseCalendarDateTime(`${nextDateStr}T${pad(OVERFLOW_HOUR)}:00:00`);
       }
     } else {
-      organizingStart = new Date(`${date}T${pad(OVERFLOW_HOUR)}:00:00`);
+      organizingStart = parseCalendarDateTime(`${date}T${pad(OVERFLOW_HOUR)}:00:00`);
     }
 
     const windows = buildSchedulingWindows({
