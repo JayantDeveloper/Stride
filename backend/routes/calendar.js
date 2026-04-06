@@ -87,9 +87,9 @@ router.post("/sync", async (req, res) => {
 
   const now = new Date();
   const start = new Date(now);
-  start.setMonth(start.getMonth() - 3);
+  start.setMonth(start.getMonth() - 1);
   const end = new Date(now);
-  end.setMonth(end.getMonth() + 3);
+  end.setMonth(end.getMonth() + 6);
 
   try {
     const googleEvents = await gcal.listEvents(start.toISOString(), end.toISOString());

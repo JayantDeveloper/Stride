@@ -60,7 +60,7 @@ async function listEvents(startTime, endTime) {
     timeMax: endTime,
     singleEvents: true,
     orderBy: "startTime",
-    maxResults: 250,
+    maxResults: 2500,
   });
 
   return (response.data.items || []).map(normalizeEvent);
