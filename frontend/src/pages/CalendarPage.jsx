@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+
 import { DayView } from '../components/calendar/DayView'
 import { WeekView } from '../components/calendar/WeekView'
 import { MonthView } from '../components/calendar/MonthView'
@@ -30,9 +31,9 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
   const [duplicateSource, setDuplicateSource] = useState(null)
 
   const weekStart = getWeekStart(currentDate)
-  const { events, loading, syncing, syncFromGoogle, createEvent, updateEvent, deleteEvent, undoDeleteEvent, reload } = useCalendarEvents({ skip: true })
+  const { events, loading, syncing, syncFromGoogle, createEvent, updateEvent, deleteEvent, undoDeleteEvent, reload } = useCalendarEvents()
   const { isBreak, isRunning, timeLeft } = useBoardPomodoroState()
-  const { connected, loading: authLoading } = useGoogleAuth()
+  const { connected, loading: authLoading, connect } = useGoogleAuth()
   const recovery = useMissedBlockRecovery()
   const { addToast } = useToast()
 
@@ -51,17 +52,6 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
     return () => document.removeEventListener('keydown', handler)
   }, [undoDeleteEvent])
 
-  // Load events exactly once after auth status is known — sync if connected, plain load if not
-  const hasSynced = useRef(false)
-  useEffect(() => {
-    if (authLoading || hasSynced.current) return
-    hasSynced.current = true
-    if (connected) {
-      syncFromGoogle().catch(() => {})
-    } else {
-      reload()
-    }
-  }, [authLoading, connected])
 
   useEffect(() => {
     if (!contextMenu) return
@@ -387,9 +377,9 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
               {syncing ? 'Syncing…' : 'Sync'}
             </button>
           ) : (
-            <a href="/settings" className="text-xs text-indigo-400 hover:underline">
+            <button onClick={connect} className="text-xs text-indigo-400 hover:underline">
               Connect Google
-            </a>
+            </button>
           )}
         </div>
       </div>

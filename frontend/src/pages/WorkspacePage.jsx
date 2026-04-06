@@ -227,10 +227,11 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
       } catch { /* keep timer flow moving */ }
     }
 
-    const steps = await ensureBreakdownForTask(task)
-    if (steps.length > 0) {
-      const startIndex = Math.max(0, Math.min(task.current_subtask_index ?? 0, steps.length - 1))
-      await syncSubtaskState(task, steps, startIndex)
+    // If breakdown already exists, resume at the saved subtask index
+    const existing = task.breakdown_json ? JSON.parse(task.breakdown_json) : []
+    if (existing.length > 0) {
+      const startIndex = Math.max(0, Math.min(task.current_subtask_index ?? 0, existing.length - 1))
+      await syncSubtaskState(task, existing, startIndex)
     } else {
       setCurrentSprintGoal('')
     }

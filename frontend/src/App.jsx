@@ -84,13 +84,18 @@ export default function App() {
             <div className="flex-1 overflow-y-auto">
               <SettingsPage />
             </div>
-          ) : tab === 'workspace' ? (
-            <WorkspacePage
-              externalSprintRequest={workspaceSprintRequest}
-              onExternalSprintHandled={() => setWorkspaceSprintRequest(null)}
-            />
           ) : (
-            <CalendarPage onRouteRecoverySprintToWorkspace={routeRecoverySprintToWorkspace} />
+            <>
+              <div className={tab === 'workspace' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
+                <WorkspacePage
+                  externalSprintRequest={workspaceSprintRequest}
+                  onExternalSprintHandled={() => setWorkspaceSprintRequest(null)}
+                />
+              </div>
+              <div className={tab === 'calendar' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
+                <CalendarPage onRouteRecoverySprintToWorkspace={routeRecoverySprintToWorkspace} />
+              </div>
+            </>
           )}
         </main>
 
