@@ -385,9 +385,9 @@ router.post("/organize", async (req, res) => {
         const blocking = externalEvents
           .filter(ev => {
             const evStart = new Date(ev.start_time);
-            const evEnd = new Date(ev.end_time);
             if (taskSplit) {
-              return evStart < new Date(potentialEnd.getTime() + SPLIT_MARGIN_MS) && evEnd > cursor;
+              // Split: find the next event that starts strictly after cursor
+              return evStart > cursor;
             }
             return evStart > cursor && evStart < potentialEnd;
           })
@@ -399,12 +399,17 @@ router.post("/organize", async (req, res) => {
             cursor = snapTo30(new Date(blocking.end_time));
             continue;
           }
-          blockEnd = new Date(new Date(blocking.start_time).getTime() - SPLIT_MARGIN_MS);
-          minsScheduled = Math.round((blockEnd.getTime() - cursor.getTime()) / 60_000);
-          if (minsScheduled < 10) {
+          // Split mode: measure usable gap before the next event (with 5-min margin)
+          const gapEnd = new Date(new Date(blocking.start_time).getTime() - SPLIT_MARGIN_MS);
+          const gapMs = gapEnd.getTime() - cursor.getTime();
+          const MIN_GAP_MS = 20 * 60_000; // gaps under 20 min are not worth using
+          if (gapMs < MIN_GAP_MS) {
             cursor = new Date(new Date(blocking.end_time).getTime() + SPLIT_MARGIN_MS);
             continue;
           }
+          // Cap chunk to remaining work so we don't overshoot
+          minsScheduled = Math.min(Math.floor(gapMs / 60_000), remaining);
+          blockEnd = new Date(cursor.getTime() + minsScheduled * 60_000);
         } else {
           blockEnd = potentialEnd;
           minsScheduled = remaining;
