@@ -33,3 +33,6 @@ dist-ssr
 *.db-shm
 *.db-wal
 backend/data/
+
+# Local git worktrees
+.worktrees/
