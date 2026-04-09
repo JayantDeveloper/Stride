@@ -142,13 +142,7 @@ router.patch("/:id", async (req, res) => {
   }
 
   if ("status" in req.body && updated.status === "Done") {
-    await dbRun(`
-      UPDATE calendar_events
-      SET block_state = 'done',
-          event_type = CASE WHEN event_type = 'task_block' THEN 'completed' ELSE event_type END,
-          synced_at = datetime('now')
-      WHERE task_id = ?
-    `, [updated.id]);
+    await clearFutureTaskBlocksForCompletedTask(updated.id);
   }
 
   res.json({ task: { ...updated, tags: safeParseJSON(updated.tags, []) } });
@@ -178,6 +172,47 @@ router.delete("/:id", async (req, res) => {
 
 function safeParseJSON(str, fallback) {
   try { return JSON.parse(str); } catch { return fallback; }
+}
+
+async function clearFutureTaskBlocksForCompletedTask(taskId) {
+  const now = new Date();
+  const gcalConnected = !!(await dbGet("SELECT id FROM google_credentials WHERE id = 1"));
+  const blocks = await dbAll(`
+    SELECT * FROM calendar_events
+    WHERE task_id = ?
+      AND event_type IN ('task_block', 'completed')
+    ORDER BY start_time ASC
+  `, [taskId]);
+
+  for (const block of blocks) {
+    const startsInFuture = new Date(block.start_time).getTime() > now.getTime();
+
+    if (startsInFuture) {
+      if (block.google_event_id && gcalConnected) {
+        try {
+          await gcal.deleteEvent(block.google_event_id);
+        } catch (e) {
+          console.error("GCal future task-block delete failed:", e.message);
+        }
+      }
+
+      await dbRun("DELETE FROM calendar_events WHERE id = ?", [block.id]);
+      continue;
+    }
+
+    await dbRun(`
+      UPDATE calendar_events
+      SET block_state = 'done',
+          event_type = CASE WHEN event_type = 'task_block' THEN 'completed' ELSE event_type END,
+          synced_at = datetime('now')
+      WHERE id = ?
+    `, [block.id]);
+  }
+
+  await dbRun(
+    "UPDATE tasks SET calendar_event_id = NULL, updated_at = datetime('now') WHERE id = ?",
+    [taskId]
+  );
 }
 
 module.exports = router;
