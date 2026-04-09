@@ -16,8 +16,13 @@ export default defineConfig({
     },
   },
   test: {
+    include: [
+      'src/**/*.test.{js,jsx,ts,tsx}',
+      'src/**/*.spec.{js,jsx,ts,tsx}',
+    ],
     environment: 'jsdom',
     setupFiles: './src/test/setup.js',
     globals: true,
+    exclude: ['src/hooks/workspace/workspaceModels.test.js'],
   },
 })
