@@ -4,7 +4,6 @@ const gcal = require("./googleCalendar");
 
 const MISSED_BLOCK_GRACE_MINUTES = 10;
 const RECOVERY_DISMISS_MINUTES = 60;
-const TOMORROW_START_HOUR = 9;
 const DAY_END_HOUR = 23;
 const BLOCK_STATES = new Set(["scheduled", "missed", "recovered", "deferred", "done"]);
 
@@ -20,6 +19,14 @@ function localDateKey(input) {
 function localISO(input) {
   const d = input instanceof Date ? input : new Date(input);
   return `${localDateKey(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+}
+
+function getLocalDayRange(input = new Date()) {
+  const start = new Date(input);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start, end };
 }
 
 function roundUpToHalfHour(input) {
@@ -40,15 +47,16 @@ function durationMinutes(startISO, endISO) {
   return Math.max(0, Math.round((new Date(endISO).getTime() - new Date(startISO).getTime()) / 60000));
 }
 
-async function isTaskExecutedDuringBlock(block) {
+async function isTaskExecutedDuringBlock(userId, block) {
   if (!block.task_id) return false;
 
   const sessions = await dbAll(`
     SELECT * FROM focus_sessions
     WHERE task_id = ?
+      AND user_id = ?
     ORDER BY started_at DESC
     LIMIT 50
-  `, [block.task_id]);
+  `, [block.task_id, userId]);
 
   const blockStart = new Date(block.start_time).getTime();
   const blockEnd = new Date(block.end_time).getTime();
@@ -66,7 +74,7 @@ async function isTaskExecutedDuringBlock(block) {
   });
 }
 
-async function eligibleMissedBlocks(now = new Date()) {
+async function eligibleMissedBlocks(userId, now = new Date()) {
   const cutoff = new Date(now.getTime() - MISSED_BLOCK_GRACE_MINUTES * 60_000).toISOString();
   return dbAll(`
     SELECT
@@ -82,29 +90,31 @@ async function eligibleMissedBlocks(now = new Date()) {
       t.current_sprint_goal AS task_current_sprint_goal
     FROM calendar_events ce
     JOIN tasks t ON t.id = ce.task_id
-    WHERE ce.event_type = 'task_block'
+    WHERE ce.user_id = ?
+      AND t.user_id = ?
+      AND ce.event_type = 'task_block'
       AND ce.task_id IS NOT NULL
       AND ce.block_state = 'scheduled'
       AND ce.end_time < ?
       AND t.status != 'Done'
     ORDER BY ce.end_time DESC
-  `, [cutoff]);
+  `, [userId, userId, cutoff]);
 }
 
-async function materializeMissedBlocks(now = new Date()) {
-  const candidates = await eligibleMissedBlocks(now);
+async function materializeMissedBlocks(userId, now = new Date()) {
+  const candidates = await eligibleMissedBlocks(userId, now);
   for (const block of candidates) {
-    if (!(await isTaskExecutedDuringBlock(block))) {
+    if (!(await isTaskExecutedDuringBlock(userId, block))) {
       await dbRun(`
         UPDATE calendar_events
-        SET block_state = 'missed', synced_at = datetime('now')
-        WHERE id = ?
-      `, [block.id]);
+        SET block_state = 'missed', synced_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+      `, [block.id, userId]);
     }
   }
 }
 
-async function getTaskBlockById(blockId) {
+async function getTaskBlockById(userId, blockId) {
   return dbGet(`
     SELECT
       ce.*,
@@ -120,10 +130,11 @@ async function getTaskBlockById(blockId) {
     FROM calendar_events ce
     LEFT JOIN tasks t ON t.id = ce.task_id
     WHERE ce.id = ?
-  `, [blockId]);
+      AND ce.user_id = ?
+  `, [blockId, userId]);
 }
 
-async function findFirstSlot({ from, durationMins, excludeEventId = null }) {
+async function findFirstSlot({ userId, from, durationMins, excludeEventId = null }) {
   const start = roundUpToHalfHour(from);
   const dateStr = localDateKey(start);
   const dayEnd = new Date(`${dateStr}T${pad(DAY_END_HOUR)}:00:00`);
@@ -134,9 +145,11 @@ async function findFirstSlot({ from, durationMins, excludeEventId = null }) {
   const params = [dayEnd.toISOString(), cursor.toISOString()];
   let sql = `
     SELECT * FROM calendar_events
-    WHERE start_time < ?
+    WHERE user_id = ?
+      AND start_time < ?
       AND end_time > ?
   `;
+  params.unshift(userId);
 
   if (excludeEventId) {
     sql += " AND id != ?";
@@ -178,29 +191,48 @@ async function findFirstSlot({ from, durationMins, excludeEventId = null }) {
   return null;
 }
 
-async function computeRecoveryOptions(block, now = new Date()) {
+async function computeRecoveryOptions(userId, block, now = new Date()) {
   const dur = durationMinutes(block.start_time, block.end_time) || Math.max(10, block.task_estimated_mins ?? 30);
 
-  const [nextToday, tomorrowSlot] = await Promise.all([
-    findFirstSlot({ from: now, durationMins: dur, excludeEventId: block.id }),
-    (() => {
-      const tomorrow = new Date(now);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(TOMORROW_START_HOUR, 0, 0, 0);
-      return findFirstSlot({ from: tomorrow, durationMins: dur, excludeEventId: block.id });
-    })(),
-  ]);
+  const nextToday = await findFirstSlot({ userId, from: now, durationMins: dur, excludeEventId: block.id });
 
   return {
     duration_mins: dur,
     start_sprint: { planned_mins: 10 },
     move_next_open_slot: nextToday ? { start_time: nextToday.start, end_time: nextToday.end } : null,
-    defer_tomorrow: tomorrowSlot ? { start_time: tomorrowSlot.start, end_time: tomorrowSlot.end } : null,
   };
 }
 
-async function latestUnresolvedMissedBlock(now = new Date()) {
-  await materializeMissedBlocks(now);
+async function getEndOfDayRolloverStatus(userId, now = new Date()) {
+  const { start, end } = getLocalDayRange(now);
+  const dayStart = localISO(start);
+  const nextDayStart = localISO(end);
+  const rows = await dbAll(`
+    SELECT ce.id, ce.task_id
+    FROM calendar_events ce
+    JOIN tasks t ON t.id = ce.task_id
+    WHERE ce.user_id = ?
+      AND t.user_id = ?
+      AND ce.event_type = 'task_block'
+      AND ce.task_id IS NOT NULL
+      AND t.status != 'Done'
+      AND ce.start_time >= ?
+      AND ce.start_time < ?
+      AND ce.block_state IN ('scheduled', 'missed')
+  `, [userId, userId, dayStart, nextDayStart]);
+
+  if (rows.length === 0) return null;
+
+  const taskIds = new Set(rows.map((row) => row.task_id).filter(Boolean));
+  return {
+    today_block_count: rows.length,
+    affected_task_count: taskIds.size,
+    tomorrow_date: localDateKey(end),
+  };
+}
+
+async function latestUnresolvedMissedBlock(userId, now = new Date()) {
+  await materializeMissedBlocks(userId, now);
   const rows = await dbAll(`
     SELECT
       ce.*,
@@ -215,7 +247,9 @@ async function latestUnresolvedMissedBlock(now = new Date()) {
       t.current_sprint_goal AS task_current_sprint_goal
     FROM calendar_events ce
     JOIN tasks t ON t.id = ce.task_id
-    WHERE ce.event_type = 'task_block'
+    WHERE ce.user_id = ?
+      AND t.user_id = ?
+      AND ce.event_type = 'task_block'
       AND ce.task_id IS NOT NULL
       AND ce.block_state = 'missed'
       AND t.status != 'Done'
@@ -225,40 +259,40 @@ async function latestUnresolvedMissedBlock(now = new Date()) {
       )
     ORDER BY ce.end_time DESC
     LIMIT 10
-  `, [now.toISOString()]);
+  `, [userId, userId, now.toISOString()]);
 
   for (const block of rows) {
-    if (!(await isTaskExecutedDuringBlock(block))) {
+    if (!(await isTaskExecutedDuringBlock(userId, block))) {
       return {
         ...block,
-        recovery_options: await computeRecoveryOptions(block, now),
+        recovery_options: await computeRecoveryOptions(userId, block, now),
       };
     }
 
     await dbRun(`
       UPDATE calendar_events
-      SET block_state = 'recovered', recovery_dismissed_until = NULL, synced_at = datetime('now')
-      WHERE id = ?
-    `, [block.id]);
+      SET block_state = 'recovered', recovery_dismissed_until = NULL, synced_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND user_id = ?
+    `, [block.id, userId]);
   }
 
   return null;
 }
 
-async function dismissMissedBlock(blockId, now = new Date()) {
+async function dismissMissedBlock(userId, blockId, now = new Date()) {
   const hiddenUntil = new Date(now.getTime() + RECOVERY_DISMISS_MINUTES * 60_000).toISOString();
   await dbRun(`
     UPDATE calendar_events
-    SET recovery_dismissed_until = ?, synced_at = datetime('now')
-    WHERE id = ?
-  `, [hiddenUntil, blockId]);
+    SET recovery_dismissed_until = ?, synced_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND user_id = ?
+  `, [hiddenUntil, blockId, userId]);
 
   return hiddenUntil;
 }
 
-async function updateGoogleEventIfNeeded(block, fields) {
+async function updateGoogleEventIfNeeded(userId, block, fields) {
   if (!block.google_event_id) return;
-  await gcal.updateEvent(block.google_event_id, {
+  await gcal.updateEvent(userId, block.google_event_id, {
     title: fields.title,
     description: fields.description,
     location: fields.location,
@@ -275,10 +309,11 @@ async function archiveHandledBlock(block, nextState) {
 
   await dbRun(`
     INSERT INTO calendar_events
-      (id, google_event_id, google_cal_id, title, description, location, start_time, end_time, all_day, event_type, task_id, block_state, recovery_dismissed_until, color, color_id, synced_at)
-    VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, datetime('now'))
+      (id, user_id, google_event_id, google_cal_id, title, description, location, start_time, end_time, all_day, event_type, task_id, block_state, recovery_dismissed_until, color, color_id, synced_at)
+    VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, CURRENT_TIMESTAMP)
   `, [
     crypto.randomUUID(),
+    block.user_id,
     block.google_cal_id ?? "primary",
     block.title,
     block.description ?? "",
@@ -294,21 +329,70 @@ async function archiveHandledBlock(block, nextState) {
   ]);
 }
 
-async function rescheduleBlock(blockId, mode) {
-  const block = await getTaskBlockById(blockId);
-  if (!block) throw new Error("Missed block not found");
-  if (!block.task_id) throw new Error("Missed block is not linked to a task");
+async function archiveTodayTaskBlocksForTomorrow(userId, now = new Date()) {
+  const { start, end } = getLocalDayRange(now);
+  const dayStart = localISO(start);
+  const nextDayStart = localISO(end);
+  const blocks = await dbAll(`
+    SELECT ce.*, t.status AS task_status
+    FROM calendar_events ce
+    JOIN tasks t ON t.id = ce.task_id
+    WHERE ce.user_id = ?
+      AND t.user_id = ?
+      AND ce.event_type = 'task_block'
+      AND ce.task_id IS NOT NULL
+      AND t.status != 'Done'
+      AND ce.start_time >= ?
+      AND ce.start_time < ?
+      AND ce.block_state IN ('scheduled', 'missed')
+    ORDER BY ce.start_time ASC
+  `, [userId, userId, dayStart, nextDayStart]);
 
-  const options = await computeRecoveryOptions(block, new Date());
-  const slot = mode === "move_next_open_slot" ? options.move_next_open_slot : options.defer_tomorrow;
+  const taskIds = new Set();
 
-  if (!slot) {
-    throw new Error(mode === "move_next_open_slot" ? "No open slot available later today" : "No open slot available tomorrow");
+  for (const block of blocks) {
+    taskIds.add(block.task_id);
+    await archiveHandledBlock(block, "deferred");
+
+    if (block.google_event_id) {
+      try {
+        await gcal.deleteEvent(userId, block.google_event_id);
+      } catch (_) {
+        // Keep the local rollover moving even if Google cleanup fails.
+      }
+    }
+
+    await dbRun("DELETE FROM calendar_events WHERE id = ? AND user_id = ?", [block.id, userId]);
+    await dbRun(
+      "UPDATE tasks SET calendar_event_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE calendar_event_id = ? AND user_id = ?",
+      [block.id, userId]
+    );
   }
 
-  const handledState = mode === "defer_tomorrow" ? "deferred" : "recovered";
+  return {
+    deferred_blocks: blocks.length,
+    affected_task_count: taskIds.size,
+  };
+}
+
+async function rescheduleBlock(userId, blockId, mode) {
+  const block = await getTaskBlockById(userId, blockId);
+  if (!block) throw new Error("Missed block not found");
+  if (!block.task_id) throw new Error("Missed block is not linked to a task");
+  if (mode !== "move_next_open_slot") {
+    throw new Error("Unsupported recovery mode");
+  }
+
+  const options = await computeRecoveryOptions(userId, block, new Date());
+  const slot = options.move_next_open_slot;
+
+  if (!slot) {
+    throw new Error("No open slot available later today");
+  }
+
+  const handledState = "recovered";
   await archiveHandledBlock(block, handledState);
-  await updateGoogleEventIfNeeded(block, {
+  await updateGoogleEventIfNeeded(userId, block, {
     title: block.title,
     description: block.description,
     location: block.location,
@@ -319,49 +403,49 @@ async function rescheduleBlock(blockId, mode) {
 
   await dbRun(`
     UPDATE calendar_events
-    SET start_time = ?,
+      SET start_time = ?,
         end_time = ?,
         block_state = 'scheduled',
         recovery_dismissed_until = NULL,
-        synced_at = datetime('now')
-    WHERE id = ?
-  `, [slot.start_time, slot.end_time, block.id]);
+        synced_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND user_id = ?
+  `, [slot.start_time, slot.end_time, block.id, userId]);
 
-  const updated = await getTaskBlockById(block.id);
+  const updated = await getTaskBlockById(userId, block.id);
   return {
     block: updated,
     archived_state: handledState,
-    recovery_options: await computeRecoveryOptions(updated, new Date()),
+    recovery_options: await computeRecoveryOptions(userId, updated, new Date()),
   };
 }
 
-async function startRecoverySprint(blockId) {
-  const block = await getTaskBlockById(blockId);
+async function startRecoverySprint(userId, blockId) {
+  const block = await getTaskBlockById(userId, blockId);
   if (!block) throw new Error("Missed block not found");
   if (!block.task_id) throw new Error("Missed block is not linked to a task");
 
   await dbRun(`
     UPDATE tasks
-    SET status = 'Not Started', updated_at = datetime('now')
-    WHERE status = 'In Progress' AND id != ?
-  `, [block.task_id]);
+    SET status = 'Not Started', updated_at = CURRENT_TIMESTAMP
+    WHERE user_id = ? AND status = 'In Progress' AND id != ?
+  `, [userId, block.task_id]);
 
   await dbRun(`
     UPDATE tasks
-    SET status = 'In Progress', updated_at = datetime('now')
-    WHERE id = ?
-  `, [block.task_id]);
+    SET status = 'In Progress', updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND user_id = ?
+  `, [block.task_id, userId]);
 
   await dbRun(`
     UPDATE calendar_events
     SET block_state = 'recovered',
         recovery_dismissed_until = NULL,
-        synced_at = datetime('now')
-    WHERE id = ?
-  `, [block.id]);
+        synced_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND user_id = ?
+  `, [block.id, userId]);
 
-  const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [block.task_id]);
-  return { block: await getTaskBlockById(block.id), task };
+  const task = await dbGet("SELECT * FROM tasks WHERE id = ? AND user_id = ?", [block.task_id, userId]);
+  return { block: await getTaskBlockById(userId, block.id), task };
 }
 
 module.exports = {
@@ -369,6 +453,8 @@ module.exports = {
   latestUnresolvedMissedBlock,
   getTaskBlockById,
   computeRecoveryOptions,
+  getEndOfDayRolloverStatus,
+  archiveTodayTaskBlocksForTomorrow,
   dismissMissedBlock,
   rescheduleBlock,
   startRecoverySprint,

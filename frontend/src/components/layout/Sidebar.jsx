@@ -20,10 +20,10 @@ export function Sidebar() {
       {/* Logo */}
       <div className="flex items-center gap-2.5 px-3 py-4" style={{ borderBottom: '1px solid var(--color-notion-border)' }}>
         {!collapsed && (
-          <span className="text-sm font-semibold text-notion-text tracking-tight truncate">FocusLab</span>
+          <span className="text-sm font-semibold text-notion-text tracking-tight truncate">Stride</span>
         )}
         {collapsed && (
-          <span className="text-sm font-semibold text-indigo-400 tracking-tight">FL</span>
+          <span className="text-sm font-semibold text-indigo-400 tracking-tight">S</span>
         )}
       </div>
 

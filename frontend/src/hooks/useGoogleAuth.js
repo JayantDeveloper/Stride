@@ -1,18 +1,24 @@
-// useGoogleAuth.js — Google OAuth status and connect/disconnect
-
 import { useCallback, useEffect, useState } from 'react'
 import { apiRequest } from '../utils/apiClient'
 
+const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar'
+
 export function useGoogleAuth() {
-  const [status, setStatus] = useState({ connected: false, email: null })
+  const [status, setStatus] = useState({ connected: false, account: null })
   const [loading, setLoading] = useState(true)
 
   const checkStatus = useCallback(async () => {
     try {
-      const data = await apiRequest('/api/auth/status')
-      setStatus({ connected: data.connected, email: data.email })
+      const accounts = await apiRequest('/api/auth/list-accounts')
+      const googleAccount = accounts.find(account => account.providerId === 'google') ?? null
+      const scopes = Array.isArray(googleAccount?.scopes) ? googleAccount.scopes : []
+
+      setStatus({
+        connected: scopes.includes(GOOGLE_CALENDAR_SCOPE),
+        account: googleAccount,
+      })
     } catch {
-      setStatus({ connected: false, email: null })
+      setStatus({ connected: false, account: null })
     } finally {
       setLoading(false)
     }
@@ -20,16 +26,35 @@ export function useGoogleAuth() {
 
   useEffect(() => { checkStatus() }, [checkStatus])
 
-  const connect = useCallback(() => {
-    // Full-page redirect to backend OAuth initiation (must hit Railway, not Vercel)
-    const base = import.meta.env.VITE_API_URL ?? ''
-    window.location.href = `${base}/api/auth/google`
+  const connect = useCallback(async ({ callbackURL } = {}) => {
+    const data = await apiRequest('/api/auth/link-social', {
+      method: 'POST',
+      body: {
+        provider: 'google',
+        disableRedirect: true,
+        callbackURL: callbackURL ?? window.location.href,
+        scopes: [GOOGLE_CALENDAR_SCOPE],
+      },
+    })
+
+    if (data?.url) {
+      window.location.href = data.url
+    }
   }, [])
 
   const disconnect = useCallback(async () => {
-    await apiRequest('/api/auth/google', { method: 'DELETE' })
-    setStatus({ connected: false, email: null })
-  }, [])
+    if (!status.account) return
+
+    await apiRequest('/api/auth/unlink-account', {
+      method: 'POST',
+      body: {
+        providerId: 'google',
+        accountId: status.account.accountId,
+      },
+    })
+
+    setStatus({ connected: false, account: null })
+  }, [status.account])
 
   return { ...status, loading, connect, disconnect, refresh: checkStatus }
 }

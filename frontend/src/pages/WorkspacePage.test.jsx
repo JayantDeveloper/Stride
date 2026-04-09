@@ -7,16 +7,34 @@ const mocks = vi.hoisted(() => ({
   organize: vi.fn(async () => ({ scheduled: [] })),
   reloadEvents: vi.fn(),
   startSprintNow: vi.fn(),
+  moveToNextOpenSlot: vi.fn(),
+  dismissRecovery: vi.fn(),
+  rolloverToTomorrow: vi.fn(async () => ({ scheduled: [] })),
+  isEndOfDay: false,
+  recoveryBlock: null,
+  recoveryRecommendation: null,
+  recoveryRollover: null,
   nextTaskId: 2,
   serverTasks: [
     {
       id: 'task-1',
-      title: 'Existing task',
+      title: 'High task',
+      position: 1,
       status: 'Not Started',
-      priority: 'Medium',
+      priority: 'High',
       difficulty: 'Easy',
       estimated_mins: 30,
-      allow_split: 1,
+      allow_split: 0,
+    },
+    {
+      id: 'task-2',
+      title: 'Low task',
+      position: 2,
+      status: 'Not Started',
+      priority: 'Low',
+      difficulty: 'Easy',
+      estimated_mins: 30,
+      allow_split: 0,
     },
   ],
 }))
@@ -34,6 +52,7 @@ vi.mock('../utils/apiClient', () => ({
       const task = {
         id: `task-${mocks.nextTaskId++}`,
         title: body.title ?? 'New task',
+        position: body.position ?? mocks.serverTasks.length + 1,
         status: body.status ?? 'Not Started',
         priority: body.priority ?? 'Medium',
         difficulty: body.difficulty ?? 'Easy',
@@ -67,6 +86,14 @@ vi.mock('../utils/apiClient', () => ({
   },
 }))
 
+vi.mock('../utils/dateHelpers', async () => {
+  const actual = await vi.importActual('../utils/dateHelpers')
+  return {
+    ...actual,
+    isEndOfDayRolloverTime: () => mocks.isEndOfDay,
+  }
+})
+
 vi.mock('../context/ToastContext', () => ({
   useToast: () => ({ addToast: mocks.addToast }),
 }))
@@ -86,14 +113,15 @@ vi.mock('../hooks/useCalendarEvents', () => ({
 
 vi.mock('../hooks/useMissedBlockRecovery', () => ({
   useMissedBlockRecovery: () => ({
-    block: null,
+    block: mocks.recoveryBlock,
+    rollover: mocks.recoveryRollover,
     aiLoading: false,
-    actionLoading: false,
-    recommendation: null,
+    actionLoading: '',
+    recommendation: mocks.recoveryRecommendation,
     startSprintNow: mocks.startSprintNow,
-    moveToNextOpenSlot: vi.fn(),
-    deferToTomorrow: vi.fn(),
-    dismiss: vi.fn(),
+    moveToNextOpenSlot: mocks.moveToNextOpenSlot,
+    rolloverToTomorrow: mocks.rolloverToTomorrow,
+    dismiss: mocks.dismissRecovery,
     reload: vi.fn(),
   }),
 }))
@@ -121,10 +149,6 @@ vi.mock('../components/execute/ExecutionPomodoro', () => ({
   ExecutionPomodoro: () => null,
 }))
 
-vi.mock('../components/shared/MissedBlockRecoveryCard', () => ({
-  MissedBlockRecoveryCard: () => null,
-}))
-
 vi.mock('../components/shared/Spinner', () => ({
   Spinner: () => <div data-testid="spinner" />,
 }))
@@ -141,76 +165,69 @@ describe('WorkspacePage regressions', () => {
     mocks.serverTasks = [
       {
         id: 'task-1',
-        title: 'Existing task',
+        title: 'High task',
+        position: 1,
         status: 'Not Started',
-        priority: 'Medium',
+        priority: 'High',
         difficulty: 'Easy',
         estimated_mins: 30,
-        allow_split: 1,
+        allow_split: 0,
+      },
+      {
+        id: 'task-2',
+        title: 'Low task',
+        position: 2,
+        status: 'Not Started',
+        priority: 'Low',
+        difficulty: 'Easy',
+        estimated_mins: 30,
+        allow_split: 0,
       },
     ]
+    mocks.nextTaskId = 3
     mocks.addToast.mockReset()
     mocks.organize.mockClear()
     mocks.reloadEvents.mockClear()
     mocks.startSprintNow.mockClear()
+    mocks.moveToNextOpenSlot.mockClear()
+    mocks.dismissRecovery.mockClear()
+    mocks.rolloverToTomorrow.mockClear()
+    mocks.isEndOfDay = false
+    mocks.recoveryBlock = null
+    mocks.recoveryRecommendation = null
+    mocks.recoveryRollover = null
   })
 
-  it('new task renders inside the normal list and shows Split by default', async () => {
+  it('new task renders as a normal row at the very bottom of the list', async () => {
     const { container } = render(<WorkspacePage />)
     const listContainer = container.querySelector('div.flex-1.overflow-y-auto')
 
     await waitForInitialLoad()
     fireEvent.click(screen.getByRole('button', { name: '+ Task' }))
 
-    const inlineRow = await screen.findByTestId('inline-task-row-task-2')
-    const existingTask = within(listContainer).getByText('Existing task')
-    const inlineTitleInput = within(inlineRow).getByDisplayValue('New task')
+    const newRow = await screen.findByTestId('task-row-task-3')
+    const lowTask = within(listContainer).getByText('Low task')
 
     expect(listContainer).toBeInTheDocument()
-    expect(listContainer).toContainElement(inlineRow)
-    expect(listContainer).toContainElement(existingTask)
-    expect(existingTask.compareDocumentPosition(inlineTitleInput) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
-    expect(inlineRow).toBeInTheDocument()
-    expect(within(inlineRow).getByRole('button', { name: 'Split' })).toBeInTheDocument()
+    expect(listContainer).toContainElement(newRow)
+    expect(screen.queryByPlaceholderText('New task')).not.toBeInTheDocument()
+    expect(within(newRow).getByText('New task')).toBeInTheDocument()
+    expect(within(newRow).getByRole('button', { name: 'Solid' })).toBeInTheDocument()
+    expect(lowTask.compareDocumentPosition(newRow) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
   })
 
-  it('canceling inline edit keeps the task row in the list', async () => {
-    const { container } = render(<WorkspacePage />)
-    const listContainer = container.querySelector('div.flex-1.overflow-y-auto')
-
-    await waitForInitialLoad()
-    fireEvent.click(screen.getByRole('button', { name: '+ Task' }))
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText('New task')).toBeInTheDocument()
-    })
-
-    expect(listContainer).toBeInTheDocument()
-    expect(screen.getByPlaceholderText('New task')).toBeInTheDocument()
-
-    fireEvent.keyDown(screen.getByPlaceholderText('New task'), { key: 'Escape' })
-
-    await waitFor(() => {
-      expect(within(listContainer).getByText('New task')).toBeInTheDocument()
-    })
-  })
-
-  it('saving an inline task keeps the edited Cal mode on the persisted row', async () => {
+  it('clicking the added row still lets the user edit it inline', async () => {
     render(<WorkspacePage />)
 
     await waitForInitialLoad()
     fireEvent.click(screen.getByRole('button', { name: '+ Task' }))
 
-    const inlineRow = await screen.findByTestId('inline-task-row-task-2')
-    const titleInput = within(inlineRow).getByDisplayValue('New task')
+    const row = await screen.findByTestId('task-row-task-3')
+    fireEvent.click(within(row).getByText('New task'))
 
-    fireEvent.click(within(inlineRow).getByRole('button', { name: 'Split' }))
-    expect(within(inlineRow).getByRole('button', { name: 'Solid' })).toBeInTheDocument()
-
-    fireEvent.keyDown(titleInput, { key: 'Enter' })
-
-    const savedRow = await screen.findByTestId('task-row-task-2')
-    expect(within(savedRow).getByRole('button', { name: 'Solid' })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('New task')).toBeInTheDocument()
+    })
   })
 
   it('undo delete preserves a Solid task instead of recreating it as Split', async () => {
@@ -239,7 +256,7 @@ describe('WorkspacePage regressions', () => {
 
     fireEvent.keyDown(document, { ctrlKey: true, key: 'z' })
 
-    const restoredRow = await screen.findByTestId('task-row-task-2')
+    const restoredRow = await screen.findByTestId('task-row-task-3')
     expect(within(restoredRow).getByRole('button', { name: 'Solid' })).toBeInTheDocument()
   })
 
@@ -255,5 +272,54 @@ describe('WorkspacePage regressions', () => {
 
     expect(screen.queryByRole('button', { name: 'Push' })).not.toBeInTheDocument()
     expect(mocks.organize).not.toHaveBeenCalled()
+  })
+
+  it('keeps recovery same-day only before 10 PM', async () => {
+    mocks.recoveryBlock = {
+      id: 'block-1',
+      task_id: 'task-1',
+      task_title: 'Existing task',
+      title: 'Existing task',
+      start_time: '2026-04-08T18:00:00',
+      end_time: '2026-04-08T18:30:00',
+      recovery_options: {
+        move_next_open_slot: {
+          start_time: '2026-04-08T19:00:00',
+          end_time: '2026-04-08T19:30:00',
+        },
+      },
+    }
+    mocks.recoveryRecommendation = {
+      card_text: 'Try to recover this block today.',
+    }
+
+    render(<WorkspacePage />)
+
+    await waitForInitialLoad()
+
+    expect(screen.getByRole('button', { name: 'Start 10-min sprint now' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Move to next open slot' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Defer to tomorrow' })).not.toBeInTheDocument()
+  })
+
+  it('shows the end-of-day rollover action after 10 PM', async () => {
+    mocks.isEndOfDay = true
+    mocks.recoveryRollover = {
+      today_block_count: 2,
+      affected_task_count: 1,
+      tomorrow_date: '2026-04-09',
+    }
+
+    render(<WorkspacePage />)
+
+    await waitForInitialLoad()
+
+    const moveButton = screen.getByRole('button', { name: 'Move unfinished work to tomorrow' })
+    expect(moveButton).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Start 10-min sprint now' })).not.toBeInTheDocument()
+
+    fireEvent.click(moveButton)
+
+    expect(mocks.rolloverToTomorrow).toHaveBeenCalledTimes(1)
   })
 })

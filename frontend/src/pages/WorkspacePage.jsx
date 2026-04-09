@@ -4,6 +4,7 @@ import { WorkspaceOrganizePanel } from '../components/workspace/WorkspaceOrganiz
 import { WorkspaceTaskList } from '../components/workspace/WorkspaceTaskList'
 import { WorkspaceToolbar } from '../components/workspace/WorkspaceToolbar'
 import { TaskModal } from '../components/tasks/TaskModal'
+import { EndOfDayRolloverCard } from '../components/shared/EndOfDayRolloverCard'
 import { MissedBlockRecoveryCard } from '../components/shared/MissedBlockRecoveryCard'
 import { useTasks } from '../hooks/useTasks'
 import { useWorkspaceOrganizePanel } from '../hooks/workspace/useWorkspaceOrganizePanel'
@@ -16,6 +17,7 @@ import { useMissedBlockRecovery } from '../hooks/useMissedBlockRecovery'
 import { useTaskActivationAI } from '../hooks/useTaskActivationAI'
 import { useCalendarEvents } from '../hooks/useCalendarEvents'
 import { useToast } from '../context/ToastContext'
+import { isEndOfDayRolloverTime } from '../utils/dateHelpers'
 
 export default function WorkspacePage({ externalSprintRequest, onExternalSprintHandled }) {
   const { tasks, loading, createTask, updateTask, deleteTask, undoDelete, reorderTasks, reload } = useTasks()
@@ -62,6 +64,7 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
     addToast,
     requestTimerStart: sprint.requestTimerStart,
   })
+  const showEndOfDayRollover = isEndOfDayRolloverTime() && recoveryActions.rollover
 
   const { containerRef, rightPct, handleDividerMouseDown } = useWorkspacePaneResize()
 
@@ -91,7 +94,17 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
           />
         )}
 
-        {recoveryActions.block && (
+        {showEndOfDayRollover && (
+          <div className="flex-shrink-0 px-4 pt-3">
+            <EndOfDayRolloverCard
+              rollover={recoveryActions.rollover}
+              actionLoading={recoveryActions.actionLoading}
+              onMoveToTomorrow={() => { void recoveryActions.handleEndOfDayRollover() }}
+            />
+          </div>
+        )}
+
+        {!showEndOfDayRollover && recoveryActions.block && (
           <div className="flex-shrink-0 px-4 pt-3">
             <MissedBlockRecoveryCard
               block={recoveryActions.block}
@@ -101,7 +114,6 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
               onDismiss={() => { void recoveryActions.handleRecoveryDismiss() }}
               onStartSprintNow={() => { void recoveryActions.handleRecoveryStartSprint() }}
               onMoveToNextOpenSlot={() => { void recoveryActions.handleRecoveryMove() }}
-              onDeferToTomorrow={() => { void recoveryActions.handleRecoveryDefer() }}
             />
           </div>
         )}

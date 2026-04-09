@@ -1,15 +1,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const os = require("node:os");
-const path = require("node:path");
-const fs = require("node:fs/promises");
 const express = require("express");
 
-test("POST /api/tasks defaults allow_split to 1 when the client omits it", async (t) => {
-  const dbPath = path.join(os.tmpdir(), `focus-exec-tasks-${Date.now()}-${Math.random()}.db`);
-  const originalDatabaseUrl = process.env.TURSO_DATABASE_URL;
+test("POST /api/tasks defaults allow_split to 0 when the client omits it", async (t) => {
+  const originalDatabaseUrl = process.env.DATABASE_URL;
 
-  process.env.TURSO_DATABASE_URL = `file:${dbPath}`;
+  process.env.DATABASE_URL = `pg-mem://focus-exec-tasks-${Date.now()}-${Math.random()}`;
+  delete process.env.POSTGRES_URL;
+  delete require.cache[require.resolve("../db/postgres")];
   delete require.cache[require.resolve("../db/database")];
   delete require.cache[require.resolve("./tasks")];
 
@@ -20,6 +18,10 @@ test("POST /api/tasks defaults allow_split to 1 when the client omits it", async
 
   const app = express();
   app.use(express.json());
+  app.use((req, res, next) => {
+    req.user = { id: "test-user-id" };
+    next();
+  });
   app.use("/api/tasks", tasksRouter);
 
   const server = await new Promise((resolve) => {
@@ -28,14 +30,14 @@ test("POST /api/tasks defaults allow_split to 1 when the client omits it", async
 
   t.after(async () => {
     await new Promise((resolve) => server.close(resolve));
+    delete require.cache[require.resolve("../db/postgres")];
     delete require.cache[require.resolve("../db/database")];
     delete require.cache[require.resolve("./tasks")];
     if (originalDatabaseUrl === undefined) {
-      delete process.env.TURSO_DATABASE_URL;
+      delete process.env.DATABASE_URL;
     } else {
-      process.env.TURSO_DATABASE_URL = originalDatabaseUrl;
+      process.env.DATABASE_URL = originalDatabaseUrl;
     }
-    await fs.rm(dbPath, { force: true });
   });
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/api/tasks`, {
@@ -46,8 +48,9 @@ test("POST /api/tasks defaults allow_split to 1 when the client omits it", async
   const body = await response.json();
 
   assert.equal(response.status, 201);
-  assert.equal(body.task.allow_split, 1);
+  assert.equal(body.task.allow_split, 0);
+  assert.equal(body.task.user_id, "test-user-id");
 
-  const stored = await dbGet("SELECT allow_split FROM tasks WHERE id = ?", [body.task.id]);
-  assert.equal(stored.allow_split, 1);
+  const stored = await dbGet("SELECT allow_split FROM tasks WHERE id = ? AND user_id = ?", [body.task.id, "test-user-id"]);
+  assert.equal(stored.allow_split, 0);
 });

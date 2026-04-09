@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { apiRequest } from '../utils/apiClient'
+import { isEndOfDayRolloverTime } from '../utils/dateHelpers'
 
 const recoveryRecommendationCache = new Map()
-const SESSION_STORAGE_KEY = 'focuslab_recovery_recommendations'
+const SESSION_STORAGE_KEY = 'stride_recovery_recommendations'
 
 function readSessionCache() {
   if (typeof window === 'undefined') return {}
@@ -43,6 +44,7 @@ function cacheRecommendation(blockId, recommendation) {
 
 export function useMissedBlockRecovery() {
   const [block, setBlock] = useState(null)
+  const [rollover, setRollover] = useState(null)
   const [recommendation, setRecommendation] = useState(null)
   const [loading, setLoading] = useState(true)
   const [aiLoading, setAiLoading] = useState(false)
@@ -53,9 +55,10 @@ export function useMissedBlockRecovery() {
     try {
       const data = await apiRequest('/api/calendar/missed-blocks/latest')
       setBlock(data.block ?? null)
+      setRollover(data.rollover ?? null)
       setRecommendation(null)
 
-      if (data.block) {
+      if (data.block && !isEndOfDayRolloverTime()) {
         const cached = getCachedRecommendation(data.block.id)
         if (cached) {
           setRecommendation(cached)
@@ -106,6 +109,7 @@ export function useMissedBlockRecovery() {
     try {
       const data = await apiRequest(`/api/calendar/missed-blocks/${block.id}/start-sprint`, { method: 'POST' })
       setBlock(null)
+      setRollover(null)
       setRecommendation(null)
       return data
     } finally {
@@ -119,6 +123,7 @@ export function useMissedBlockRecovery() {
     try {
       const data = await apiRequest(`/api/calendar/missed-blocks/${block.id}/move-next-open-slot`, { method: 'POST' })
       setBlock(null)
+      setRollover(null)
       setRecommendation(null)
       return data
     } finally {
@@ -126,21 +131,22 @@ export function useMissedBlockRecovery() {
     }
   }, [block])
 
-  const deferToTomorrow = useCallback(async () => {
-    if (!block) return null
-    setActionLoading('defer')
+  const rolloverToTomorrow = useCallback(async () => {
+    setActionLoading('rollover')
     try {
-      const data = await apiRequest(`/api/calendar/missed-blocks/${block.id}/defer-tomorrow`, { method: 'POST' })
+      const data = await apiRequest('/api/calendar/end-of-day-rollover', { method: 'POST' })
       setBlock(null)
+      setRollover(null)
       setRecommendation(null)
       return data
     } finally {
       setActionLoading('')
     }
-  }, [block])
+  }, [])
 
   return {
     block,
+    rollover,
     recommendation,
     loading,
     aiLoading,
@@ -148,7 +154,7 @@ export function useMissedBlockRecovery() {
     dismiss,
     startSprintNow,
     moveToNextOpenSlot,
-    deferToTomorrow,
+    rolloverToTomorrow,
     reload: load,
   }
 }

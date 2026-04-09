@@ -1,5 +1,3 @@
-// routes/tasks.js — full task CRUD with Turso/libsql
-
 const express = require("express");
 const crypto = require("crypto");
 const { dbGet, dbAll, dbRun } = require("../db/database");
@@ -13,8 +11,9 @@ const ALLOWED_FIELDS = ["title", "description", "status", "priority", "difficult
 
 // GET /api/tasks
 router.get("/", async (req, res) => {
-  let query = "SELECT * FROM tasks";
-  const params = [];
+  const userId = req.user.id;
+  let query = "SELECT * FROM tasks WHERE user_id = ?";
+  const params = [userId];
   const conditions = [];
 
   if (req.query.status) {
@@ -25,7 +24,7 @@ router.get("/", async (req, res) => {
     conditions.push("priority = ?");
     params.push(req.query.priority);
   }
-  if (conditions.length) query += " WHERE " + conditions.join(" AND ");
+  if (conditions.length) query += " AND " + conditions.join(" AND ");
   query += " ORDER BY position ASC, created_at ASC";
 
   const tasks = await dbAll(query, params);
@@ -35,8 +34,12 @@ router.get("/", async (req, res) => {
 
 // POST /api/tasks
 router.post("/", async (req, res) => {
+  const userId = req.user.id;
   const id = crypto.randomUUID();
-  const maxPos = await dbGet("SELECT MAX(position) as m FROM tasks");
+  const maxPos = await dbGet(
+    "SELECT COALESCE(MAX(position), 0) AS m FROM tasks WHERE user_id = ?",
+    [userId]
+  );
   const position = (maxPos?.m ?? 0) + 1;
 
   const task = {
@@ -56,33 +59,41 @@ router.post("/", async (req, res) => {
     current_sprint_goal: req.body.current_sprint_goal ?? "",
     position,
     calendar_event_id: null,
-    allow_split: req.body.allow_split ?? 1,
+    allow_split: req.body.allow_split ?? 0,
+    user_id: userId,
   };
 
   await dbRun(`
-    INSERT INTO tasks (id, title, description, status, priority, difficulty,
+    INSERT INTO tasks (id, user_id, title, description, status, priority, difficulty,
       estimated_mins, due_date, scheduled_date, tags, next_step, breakdown_json,
       current_subtask_index, current_sprint_goal, position, calendar_event_id, allow_split)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `, [task.id, task.title, task.description, task.status, task.priority, task.difficulty,
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [task.id, task.user_id, task.title, task.description, task.status, task.priority, task.difficulty,
       task.estimated_mins, task.due_date, task.scheduled_date, task.tags, task.next_step,
       task.breakdown_json, task.current_subtask_index, task.current_sprint_goal,
       task.position, task.calendar_event_id, task.allow_split]);
 
-  const created = await dbGet("SELECT * FROM tasks WHERE id = ?", [id]);
+  const created = await dbGet("SELECT * FROM tasks WHERE id = ? AND user_id = ?", [id, userId]);
   res.status(201).json({ task: { ...created, tags: safeParseJSON(created.tags, []) } });
 });
 
 // GET /api/tasks/:id
 router.get("/:id", async (req, res) => {
-  const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [req.params.id]);
+  const task = await dbGet(
+    "SELECT * FROM tasks WHERE id = ? AND user_id = ?",
+    [req.params.id, req.user.id]
+  );
   if (!task) return res.status(404).json({ error: "Task not found" });
   res.json({ task: { ...task, tags: safeParseJSON(task.tags, []) } });
 });
 
 // PATCH /api/tasks/:id
 router.patch("/:id", async (req, res) => {
-  const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [req.params.id]);
+  const userId = req.user.id;
+  const task = await dbGet(
+    "SELECT * FROM tasks WHERE id = ? AND user_id = ?",
+    [req.params.id, userId]
+  );
   if (!task) return res.status(404).json({ error: "Task not found" });
 
   const updates = [];
@@ -97,17 +108,20 @@ router.patch("/:id", async (req, res) => {
 
   if (updates.length === 0) return res.json({ task: { ...task, tags: safeParseJSON(task.tags, []) } });
 
-  updates.push("updated_at = datetime('now')");
-  params.push(req.params.id);
+  updates.push("updated_at = CURRENT_TIMESTAMP");
+  params.push(req.params.id, userId);
 
-  await dbRun(`UPDATE tasks SET ${updates.join(", ")} WHERE id = ?`, params);
+  await dbRun(`UPDATE tasks SET ${updates.join(", ")} WHERE id = ? AND user_id = ?`, params);
 
-  const updated = await dbGet("SELECT * FROM tasks WHERE id = ?", [req.params.id]);
+  const updated = await dbGet("SELECT * FROM tasks WHERE id = ? AND user_id = ?", [req.params.id, userId]);
 
   // Auto-sync linked calendar event when title, duration, or status changes
   if (updated.calendar_event_id && ("title" in req.body || "estimated_mins" in req.body || "status" in req.body)) {
-    const ev = await dbGet("SELECT * FROM calendar_events WHERE id = ?", [updated.calendar_event_id]);
-    if (ev) {
+      const ev = await dbGet(
+        "SELECT * FROM calendar_events WHERE id = ? AND user_id = ?",
+        [updated.calendar_event_id, userId]
+      );
+      if (ev) {
       const calUpdates = {};
       if ("title" in req.body) calUpdates.title = updated.title;
       if ("estimated_mins" in req.body) {
@@ -126,13 +140,12 @@ router.patch("/:id", async (req, res) => {
       if (Object.keys(calUpdates).length > 0) {
         const setClauses = Object.keys(calUpdates).map(k => `${k} = ?`).join(", ");
         await dbRun(
-          `UPDATE calendar_events SET ${setClauses}, synced_at = datetime('now') WHERE id = ?`,
-          [...Object.values(calUpdates), updated.calendar_event_id]
+          `UPDATE calendar_events SET ${setClauses}, synced_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?`,
+          [...Object.values(calUpdates), updated.calendar_event_id, userId]
         );
 
-        const gcalConnected = !!(await dbGet("SELECT id FROM google_credentials WHERE id = 1"));
-        if (ev.google_event_id && gcalConnected && (calUpdates.title !== undefined || calUpdates.end_time !== undefined)) {
-          gcal.updateEvent(ev.google_event_id, {
+        if (ev.google_event_id && (calUpdates.title !== undefined || calUpdates.end_time !== undefined)) {
+          gcal.updateEvent(userId, ev.google_event_id, {
             title: calUpdates.title ?? ev.title,
             startTime: ev.start_time,
             endTime: calUpdates.end_time ?? ev.end_time,
@@ -143,7 +156,7 @@ router.patch("/:id", async (req, res) => {
   }
 
   if ("status" in req.body && updated.status === "Done") {
-    await clearFutureTaskBlocksForCompletedTask(updated.id);
+    await clearFutureTaskBlocksForCompletedTask(userId, updated.id);
   }
 
   res.json({ task: { ...updated, tags: safeParseJSON(updated.tags, []) } });
@@ -151,23 +164,29 @@ router.patch("/:id", async (req, res) => {
 
 // DELETE /api/tasks/:id
 router.delete("/:id", async (req, res) => {
-  const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [req.params.id]);
+  const userId = req.user.id;
+  const task = await dbGet(
+    "SELECT * FROM tasks WHERE id = ? AND user_id = ?",
+    [req.params.id, userId]
+  );
   if (!task) return res.status(404).json({ error: "Task not found" });
 
   if (task.calendar_event_id) {
-    const ev = await dbGet("SELECT * FROM calendar_events WHERE id = ?", [task.calendar_event_id]);
+    const ev = await dbGet(
+      "SELECT * FROM calendar_events WHERE id = ? AND user_id = ?",
+      [task.calendar_event_id, userId]
+    );
     if (ev) {
-      const gcalConnected = !!(await dbGet("SELECT id FROM google_credentials WHERE id = 1"));
-      if (ev.google_event_id && gcalConnected) {
-        try { await gcal.deleteEvent(ev.google_event_id); } catch (e) {
+      if (ev.google_event_id) {
+        try { await gcal.deleteEvent(userId, ev.google_event_id); } catch (e) {
           console.error("GCal delete failed:", e.message);
         }
       }
-      await dbRun("DELETE FROM calendar_events WHERE id = ?", [ev.id]);
+      await dbRun("DELETE FROM calendar_events WHERE id = ? AND user_id = ?", [ev.id, userId]);
     }
   }
 
-  await dbRun("DELETE FROM tasks WHERE id = ?", [req.params.id]);
+  await dbRun("DELETE FROM tasks WHERE id = ? AND user_id = ?", [req.params.id, userId]);
   res.json({ ok: true });
 });
 
@@ -175,29 +194,29 @@ function safeParseJSON(str, fallback) {
   try { return JSON.parse(str); } catch { return fallback; }
 }
 
-async function clearFutureTaskBlocksForCompletedTask(taskId) {
+async function clearFutureTaskBlocksForCompletedTask(userId, taskId) {
   const now = new Date();
-  const gcalConnected = !!(await dbGet("SELECT id FROM google_credentials WHERE id = 1"));
   const blocks = await dbAll(`
     SELECT * FROM calendar_events
     WHERE task_id = ?
+      AND user_id = ?
       AND event_type IN ('task_block', 'completed')
     ORDER BY start_time ASC
-  `, [taskId]);
+  `, [taskId, userId]);
 
   for (const block of blocks) {
     const startsInFuture = new Date(block.start_time).getTime() > now.getTime();
 
     if (startsInFuture) {
-      if (block.google_event_id && gcalConnected) {
+      if (block.google_event_id) {
         try {
-          await gcal.deleteEvent(block.google_event_id);
+          await gcal.deleteEvent(userId, block.google_event_id);
         } catch (e) {
           console.error("GCal future task-block delete failed:", e.message);
         }
       }
 
-      await dbRun("DELETE FROM calendar_events WHERE id = ?", [block.id]);
+      await dbRun("DELETE FROM calendar_events WHERE id = ? AND user_id = ?", [block.id, userId]);
       continue;
     }
 
@@ -205,14 +224,14 @@ async function clearFutureTaskBlocksForCompletedTask(taskId) {
       UPDATE calendar_events
       SET block_state = 'done',
           event_type = CASE WHEN event_type = 'task_block' THEN 'completed' ELSE event_type END,
-          synced_at = datetime('now')
-      WHERE id = ?
-    `, [block.id]);
+          synced_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND user_id = ?
+    `, [block.id, userId]);
   }
 
   await dbRun(
-    "UPDATE tasks SET calendar_event_id = NULL, updated_at = datetime('now') WHERE id = ?",
-    [taskId]
+    "UPDATE tasks SET calendar_event_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+    [taskId, userId]
   );
 }
 

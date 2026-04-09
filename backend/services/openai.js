@@ -135,12 +135,11 @@ Missed block: ${block.start_time} to ${block.end_time}
 Available deterministic recovery options:
 - sprint_now: Start a 10-minute sprint immediately
 - move_today: ${options.move_next_open_slot ? `Move to ${options.move_next_open_slot.start_time} – ${options.move_next_open_slot.end_time}` : "No fitting slot later today"}
-- defer_tomorrow: ${options.defer_tomorrow ? `Defer to ${options.defer_tomorrow.start_time} – ${options.defer_tomorrow.end_time}` : "No fitting slot tomorrow morning"}
 
 Choose one recommended mode. Return ONLY valid JSON:
 {
   "message": "short recommendation text for the card",
-  "recommended_mode": "sprint_now | move_today | defer_tomorrow",
+  "recommended_mode": "sprint_now | move_today",
   "reason": "short reason",
   "card_text": "optional compact wording for the UI"
 }`;

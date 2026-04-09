@@ -183,6 +183,14 @@ export function TaskRow({
     onDragStart?.()
   }
 
+  function handleTitleCellPress(e) {
+    if (editingField === 'title') return
+    if (e.target.closest('button')) return
+    if (editingField) finishCurrentEdit()
+    e.preventDefault()
+    openTextEditor('title', task.title, titleInputRef)
+  }
+
   function commitEdit(field, value) {
     setEditingField(null)
     if (value !== undefined && String(value) !== String(task[field] ?? '')) {
@@ -245,13 +253,8 @@ export function TaskRow({
         col="title"
         border
         className="transition-colors hover:bg-notion-hover"
-        onMouseDown={e => {
-          if (editingField === 'title') return
-          if (e.target.closest('button')) return
-          if (editingField) finishCurrentEdit()
-          e.preventDefault()
-          openTextEditor('title', task.title, titleInputRef)
-        }}
+        onMouseDown={handleTitleCellPress}
+        onClick={handleTitleCellPress}
       >
         {editingField === 'title' ? (
           <input

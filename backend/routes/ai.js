@@ -20,9 +20,9 @@ function normalizeStepList(steps) {
     .map((step) => step.replace(/^\d+\.\s+/, "").trim());
 }
 
-async function taskFromRequest(taskId, fields = {}) {
+async function taskFromRequest(userId, taskId, fields = {}) {
   if (taskId) {
-    const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [taskId]);
+    const task = await dbGet("SELECT * FROM tasks WHERE id = ? AND user_id = ?", [taskId, userId]);
     return task ?? null;
   }
 
@@ -42,10 +42,11 @@ async function taskFromRequest(taskId, fields = {}) {
 
 // POST /api/ai/suggest-slots
 router.post("/suggest-slots", async (req, res) => {
+  const userId = req.user.id;
   const { task_id, date } = req.body;
   if (!task_id) return res.status(400).json({ error: "task_id required" });
 
-  const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [task_id]);
+  const task = await dbGet("SELECT * FROM tasks WHERE id = ? AND user_id = ?", [task_id, userId]);
   if (!task) return res.status(404).json({ error: "Task not found" });
 
   const targetDate = date ?? new Date().toISOString().split("T")[0];
@@ -54,9 +55,10 @@ router.post("/suggest-slots", async (req, res) => {
 
   const events = await dbAll(`
     SELECT * FROM calendar_events
-    WHERE start_time <= ? AND end_time >= ?
+    WHERE user_id = ?
+      AND start_time <= ? AND end_time >= ?
     ORDER BY start_time ASC
-  `, [dayEnd, dayStart]);
+  `, [userId, dayEnd, dayStart]);
 
   const freeSlots = gcal.computeFreeSlots(events, targetDate);
 
@@ -74,19 +76,24 @@ router.post("/suggest-slots", async (req, res) => {
 
 // POST /api/ai/schedule-day
 router.post("/schedule-day", async (req, res) => {
+  const userId = req.user.id;
   const date = req.body.date ?? new Date().toISOString().split("T")[0];
   const morningNote = req.body.morning_note ?? "";
 
-  const tasks = (await dbAll("SELECT * FROM tasks WHERE status != 'Done' ORDER BY position ASC"))
+  const tasks = (await dbAll(
+    "SELECT * FROM tasks WHERE user_id = ? AND status != 'Done' ORDER BY position ASC",
+    [userId]
+  ))
     .map(t => ({ ...t, tags: safeParseJSON(t.tags, []) }));
 
   const dayStart = `${date}T00:00:00.000Z`;
   const dayEnd = `${date}T23:59:59.999Z`;
   const events = await dbAll(`
     SELECT * FROM calendar_events
-    WHERE start_time <= ? AND end_time >= ?
+    WHERE user_id = ?
+      AND start_time <= ? AND end_time >= ?
     ORDER BY start_time ASC
-  `, [dayEnd, dayStart]);
+  `, [userId, dayEnd, dayStart]);
 
   try {
     const plan = await openai.generateDayPlan({ date, tasks, events, morningNote });
@@ -103,7 +110,7 @@ router.post("/checkin-response", async (req, res) => {
 
   let title = task_title;
   if (!title && task_id) {
-    const task = await dbGet("SELECT title FROM tasks WHERE id = ?", [task_id]);
+    const task = await dbGet("SELECT title FROM tasks WHERE id = ? AND user_id = ?", [task_id, req.user.id]);
     title = task?.title ?? "Unknown task";
   }
 
@@ -120,6 +127,7 @@ router.post("/checkin-response", async (req, res) => {
 
 // POST /api/ai/evening-review
 router.post("/evening-review", async (req, res) => {
+  const userId = req.user.id;
   const date = req.body.date ?? new Date().toISOString().split("T")[0];
 
   const [sessions, checkins, completedRow] = await Promise.all([
@@ -127,10 +135,12 @@ router.post("/evening-review", async (req, res) => {
       SELECT fs.*, t.title as task_title
       FROM focus_sessions fs
       LEFT JOIN tasks t ON fs.task_id = t.id
-      WHERE date(fs.started_at) = date(?) AND fs.ended_at IS NOT NULL
-    `, [date]),
-    dbAll("SELECT * FROM accountability_checkins WHERE date(prompted_at) = date(?)", [date]),
-    dbGet("SELECT COUNT(*) as count FROM tasks WHERE status = 'Done' AND date(updated_at) = date(?)", [date]),
+      WHERE fs.user_id = ?
+        AND date(fs.started_at) = date(?)
+        AND fs.ended_at IS NOT NULL
+    `, [userId, date]),
+    dbAll("SELECT * FROM accountability_checkins WHERE user_id = ? AND date(prompted_at) = date(?)", [userId, date]),
+    dbGet("SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = 'Done' AND date(updated_at) = date(?)", [userId, date]),
   ]);
 
   try {
@@ -143,9 +153,10 @@ router.post("/evening-review", async (req, res) => {
 });
 
 router.post("/recover-block", async (req, res) => {
+  const userId = req.user.id;
   const block = req.body.block_id
-    ? await getTaskBlockById(req.body.block_id)
-    : await latestUnresolvedMissedBlock(new Date());
+    ? await getTaskBlockById(userId, req.body.block_id)
+    : await latestUnresolvedMissedBlock(userId, new Date());
 
   if (!block) return res.status(404).json({ error: "Missed block not found" });
   if (!block.task_id) return res.status(400).json({ error: "Missed block is not linked to a task" });
@@ -171,7 +182,7 @@ router.post("/recover-block", async (req, res) => {
 });
 
 router.post("/task-breakdown", async (req, res) => {
-  const task = await taskFromRequest(req.body.task_id, req.body);
+  const task = await taskFromRequest(req.user.id, req.body.task_id, req.body);
   if (!task || !task.title?.trim()) {
     return res.status(400).json({ error: "task_id or title required" });
   }
@@ -192,9 +203,9 @@ router.post("/task-breakdown", async (req, res) => {
             current_subtask_index = 0,
             next_step = ?,
             current_sprint_goal = ?,
-            updated_at = datetime('now')
-        WHERE id = ?
-      `, [JSON.stringify(steps), firstStep, firstStep, req.body.task_id]);
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+      `, [JSON.stringify(steps), firstStep, firstStep, req.body.task_id, req.user.id]);
     }
 
     res.json({ steps });
@@ -205,7 +216,7 @@ router.post("/task-breakdown", async (req, res) => {
 });
 
 router.post("/task-next-step", async (req, res) => {
-  const task = await taskFromRequest(req.body.task_id, req.body);
+  const task = await taskFromRequest(req.user.id, req.body.task_id, req.body);
   if (!task || !task.title?.trim()) {
     return res.status(400).json({ error: "task_id or title required" });
   }
@@ -227,8 +238,8 @@ router.post("/task-next-step", async (req, res) => {
 
     if (req.body.task_id) {
       await dbRun(
-        "UPDATE tasks SET next_step = ?, updated_at = datetime('now') WHERE id = ?",
-        [result.next_step ?? "", req.body.task_id]
+        "UPDATE tasks SET next_step = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+        [result.next_step ?? "", req.body.task_id, req.user.id]
       );
     }
 
@@ -240,7 +251,7 @@ router.post("/task-next-step", async (req, res) => {
 });
 
 router.post("/sprint-goal", async (req, res) => {
-  const task = await taskFromRequest(req.body.task_id, req.body);
+  const task = await taskFromRequest(req.user.id, req.body.task_id, req.body);
   if (!task || !task.title?.trim()) {
     return res.status(400).json({ error: "task_id or title required" });
   }
@@ -261,8 +272,8 @@ router.post("/sprint-goal", async (req, res) => {
 
     if (req.body.task_id) {
       await dbRun(
-        "UPDATE tasks SET current_sprint_goal = ?, updated_at = datetime('now') WHERE id = ?",
-        [result.goal ?? "", req.body.task_id]
+        "UPDATE tasks SET current_sprint_goal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+        [result.goal ?? "", req.body.task_id, req.user.id]
       );
     }
 
@@ -275,6 +286,7 @@ router.post("/sprint-goal", async (req, res) => {
 
 // POST /api/ai/organize-calendar
 router.post("/organize-calendar", async (req, res) => {
+  const userId = req.user.id;
   const {
     date,
     strategy = "priority",
@@ -289,10 +301,11 @@ router.post("/organize-calendar", async (req, res) => {
 
   const allPending = (await dbAll(`
     SELECT * FROM tasks
-    WHERE status != 'Done'
-    AND (scheduled_date = ? OR scheduled_date IS NULL)
+    WHERE user_id = ?
+      AND status != 'Done'
+      AND (scheduled_date = ? OR scheduled_date IS NULL)
     ORDER BY position ASC
-  `, [targetDate])).map(t => ({ ...t, tags: safeParseJSON(t.tags, []) }));
+  `, [userId, targetDate])).map(t => ({ ...t, tags: safeParseJSON(t.tags, []) }));
 
   if (allPending.length === 0) {
     return res.json({ blocks: [], unscheduled: [], summary: "No pending tasks to schedule.", events: [] });
@@ -300,9 +313,10 @@ router.post("/organize-calendar", async (req, res) => {
 
   const existingEvents = await dbAll(`
     SELECT * FROM calendar_events
-    WHERE start_time <= ? AND end_time >= ?
+    WHERE user_id = ?
+      AND start_time <= ? AND end_time >= ?
     ORDER BY start_time ASC
-  `, [dayEnd, dayStart]);
+  `, [userId, dayEnd, dayStart]);
 
   const freeSlots = gcal.computeFreeSlots(existingEvents, targetDate, work_start, work_end);
 
@@ -324,11 +338,12 @@ router.post("/organize-calendar", async (req, res) => {
       const existing = await dbGet(`
         SELECT id FROM calendar_events
         WHERE event_type = 'task_block'
+          AND user_id = ?
           AND start_time >= ? AND start_time <= ?
-          AND id IN (SELECT calendar_event_id FROM tasks WHERE id = ?)
-      `, [dayStart, dayEnd, taskId]);
+          AND id IN (SELECT calendar_event_id FROM tasks WHERE id = ? AND user_id = ?)
+      `, [userId, dayStart, dayEnd, taskId, userId]);
       if (existing) {
-        await dbRun("DELETE FROM calendar_events WHERE id = ?", [existing.id]);
+        await dbRun("DELETE FROM calendar_events WHERE id = ? AND user_id = ?", [existing.id, userId]);
       }
     }
 
@@ -339,19 +354,19 @@ router.post("/organize-calendar", async (req, res) => {
       const title = block.title ?? task?.title ?? "Task block";
 
       await dbRun(`
-        INSERT OR REPLACE INTO calendar_events
-          (id, google_event_id, google_cal_id, title, description, start_time, end_time, event_type, task_id, block_state, color, color_id, synced_at)
-        VALUES (?, NULL, 'primary', ?, ?, ?, ?, 'task_block', ?, 'scheduled', 'indigo', 'blueberry', datetime('now'))
-      `, [eventId, title, task?.description ?? "", block.start_time, block.end_time, block.task_id ?? null]);
+        INSERT INTO calendar_events
+          (id, user_id, google_event_id, google_cal_id, title, description, start_time, end_time, event_type, task_id, block_state, color, color_id, synced_at)
+        VALUES (?, ?, NULL, 'primary', ?, ?, ?, ?, 'task_block', ?, 'scheduled', 'indigo', 'blueberry', CURRENT_TIMESTAMP)
+      `, [eventId, userId, title, task?.description ?? "", block.start_time, block.end_time, block.task_id ?? null]);
 
       if (block.task_id && (!block.split_part || block.split_part === 1)) {
         await dbRun(
-          "UPDATE tasks SET calendar_event_id = ?, updated_at = datetime('now') WHERE id = ?",
-          [eventId, block.task_id]
+          "UPDATE tasks SET calendar_event_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+          [eventId, block.task_id, userId]
         );
       }
 
-      createdEvents.push(await dbGet("SELECT * FROM calendar_events WHERE id = ?", [eventId]));
+      createdEvents.push(await dbGet("SELECT * FROM calendar_events WHERE id = ? AND user_id = ?", [eventId, userId]));
     }
 
     res.json({

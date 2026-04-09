@@ -23,6 +23,11 @@ export function nowISO() {
   return new Date().toISOString()
 }
 
+export function isEndOfDayRolloverTime(input = new Date()) {
+  const d = input instanceof Date ? input : new Date(input)
+  return d.getHours() >= 22
+}
+
 // Format ISO datetime → "9:30 AM"
 export function formatTime(isoStr) {
   if (!isoStr) return ''

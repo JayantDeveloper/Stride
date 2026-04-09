@@ -1,7 +1,4 @@
-// services/googleCalendar.js — Google Calendar API wrapper
-
 const { google } = require("googleapis");
-const { dbGet, dbRun } = require("../db/database");
 
 const DEFAULT_TIME_ZONE =
   process.env.GOOGLE_CALENDAR_TIMEZONE ||
@@ -16,42 +13,22 @@ function getOAuth2Client() {
   );
 }
 
-async function getAuthenticatedClient() {
-  const creds = await dbGet("SELECT * FROM google_credentials WHERE id = 1");
-  if (!creds?.access_token) throw new Error("Google Calendar not connected");
+async function getAuthenticatedClient(userId) {
+  const { getGoogleAccessToken, getGoogleAccountForUser } = await import("../auth.mjs");
+
+  const account = await getGoogleAccountForUser(userId);
+  if (!account) throw new Error("Google Calendar not connected");
+
+  const accessToken = await getGoogleAccessToken(userId);
+  if (!accessToken) throw new Error("Google Calendar token unavailable");
 
   const oauth2Client = getOAuth2Client();
-  oauth2Client.setCredentials({
-    access_token: creds.access_token,
-    refresh_token: creds.refresh_token,
-    expiry_date: creds.token_expiry ? new Date(creds.token_expiry).getTime() : undefined,
-  });
-
-  const expiryMs = creds.token_expiry ? new Date(creds.token_expiry).getTime() : 0;
-  const fiveMinMs = 5 * 60 * 1000;
-  if (expiryMs - Date.now() < fiveMinMs) {
-    try {
-      const { credentials } = await oauth2Client.refreshAccessToken();
-      oauth2Client.setCredentials(credentials);
-      await dbRun(`
-        UPDATE google_credentials
-        SET access_token = ?, token_expiry = ?, updated_at = datetime('now')
-        WHERE id = 1
-      `, [
-        credentials.access_token,
-        credentials.expiry_date ? new Date(credentials.expiry_date).toISOString() : null,
-      ]);
-    } catch (e) {
-      console.error("Token refresh failed:", e.message);
-      throw new Error("Google Calendar token expired — please reconnect");
-    }
-  }
-
+  oauth2Client.setCredentials({ access_token: accessToken });
   return oauth2Client;
 }
 
-async function listEvents(startTime, endTime) {
-  const auth = await getAuthenticatedClient();
+async function listEvents(userId, startTime, endTime) {
+  const auth = await getAuthenticatedClient(userId);
   const calendar = google.calendar({ version: "v3", auth });
 
   const response = await calendar.events.list({
@@ -66,8 +43,8 @@ async function listEvents(startTime, endTime) {
   return (response.data.items || []).map(normalizeEvent);
 }
 
-async function createEvent({ title, description = "", location = "", startTime, endTime, colorId }) {
-  const auth = await getAuthenticatedClient();
+async function createEvent(userId, { title, description = "", location = "", startTime, endTime, colorId }) {
+  const auth = await getAuthenticatedClient(userId);
   const calendar = google.calendar({ version: "v3", auth });
 
   const response = await calendar.events.insert({
@@ -85,8 +62,8 @@ async function createEvent({ title, description = "", location = "", startTime, 
   return normalizeEvent(response.data);
 }
 
-async function updateEvent(googleEventId, { title, description, location, startTime, endTime, colorId }) {
-  const auth = await getAuthenticatedClient();
+async function updateEvent(userId, googleEventId, { title, description, location, startTime, endTime, colorId }) {
+  const auth = await getAuthenticatedClient(userId);
   const calendar = google.calendar({ version: "v3", auth });
 
   const patch = {};
@@ -106,46 +83,10 @@ async function updateEvent(googleEventId, { title, description, location, startT
   return normalizeEvent(response.data);
 }
 
-async function deleteEvent(googleEventId) {
-  const auth = await getAuthenticatedClient();
+async function deleteEvent(userId, googleEventId) {
+  const auth = await getAuthenticatedClient(userId);
   const calendar = google.calendar({ version: "v3", auth });
   await calendar.events.delete({ calendarId: "primary", eventId: googleEventId });
-}
-
-function getAuthUrl(state) {
-  const oauth2Client = getOAuth2Client();
-  return oauth2Client.generateAuthUrl({
-    access_type: "offline",
-    prompt: "consent",
-    scope: [
-      "https://www.googleapis.com/auth/calendar",
-      "https://www.googleapis.com/auth/userinfo.email",
-    ],
-    state,
-  });
-}
-
-async function handleCallback(code) {
-  const oauth2Client = getOAuth2Client();
-  const { tokens } = await oauth2Client.getToken(code);
-  oauth2Client.setCredentials(tokens);
-
-  const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
-  const userInfo = await oauth2.userinfo.get();
-  const email = userInfo.data.email;
-
-  await dbRun(`
-    INSERT OR REPLACE INTO google_credentials
-      (id, access_token, refresh_token, token_expiry, email, updated_at)
-    VALUES (1, ?, ?, ?, ?, datetime('now'))
-  `, [
-    tokens.access_token,
-    tokens.refresh_token ?? null,
-    tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : null,
-    email,
-  ]);
-
-  return { email };
 }
 
 function normalizeEvent(event) {
@@ -171,9 +112,9 @@ function computeFreeSlots(events, date, workStart = "09:00", workEnd = "18:00") 
   const dayEnd = new Date(`${dateStr}T${workEnd}:00`);
 
   const dayEvents = events
-    .filter(e => {
-      const s = new Date(e.start_time);
-      return s >= dayStart && s < dayEnd;
+    .filter((event) => {
+      const start = new Date(event.start_time);
+      return start >= dayStart && start < dayEnd;
     })
     .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
 
@@ -181,19 +122,19 @@ function computeFreeSlots(events, date, workStart = "09:00", workEnd = "18:00") 
   let cursor = dayStart;
 
   for (const event of dayEvents) {
-    const evStart = new Date(event.start_time);
-    const evEnd = new Date(event.end_time);
-    if (evStart > cursor) {
-      const gapMins = (evStart - cursor) / 60000;
+    const eventStart = new Date(event.start_time);
+    const eventEnd = new Date(event.end_time);
+    if (eventStart > cursor) {
+      const gapMins = (eventStart - cursor) / 60000;
       if (gapMins >= 20) {
         slots.push({
           start: cursor.toISOString(),
-          end: evStart.toISOString(),
+          end: eventStart.toISOString(),
           duration_mins: Math.round(gapMins),
         });
       }
     }
-    if (evEnd > cursor) cursor = evEnd;
+    if (eventEnd > cursor) cursor = eventEnd;
   }
 
   if (cursor < dayEnd) {
@@ -210,4 +151,10 @@ function computeFreeSlots(events, date, workStart = "09:00", workEnd = "18:00") 
   return slots;
 }
 
-module.exports = { getAuthUrl, handleCallback, listEvents, createEvent, updateEvent, deleteEvent, computeFreeSlots };
+module.exports = {
+  listEvents,
+  createEvent,
+  updateEvent,
+  deleteEvent,
+  computeFreeSlots,
+};

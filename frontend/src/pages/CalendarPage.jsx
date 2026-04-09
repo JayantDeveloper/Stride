@@ -6,6 +6,7 @@ import { MonthView } from '../components/calendar/MonthView'
 import { CalendarEventModal } from '../components/calendar/CalendarEventModal'
 import { QuickCreatePopover } from '../components/calendar/QuickCreatePopover'
 import { Button } from '../components/shared/Button'
+import { EndOfDayRolloverCard } from '../components/shared/EndOfDayRolloverCard'
 import { MissedBlockRecoveryCard } from '../components/shared/MissedBlockRecoveryCard'
 import { Spinner } from '../components/shared/Spinner'
 import { useCalendarEvents } from '../hooks/useCalendarEvents'
@@ -13,7 +14,7 @@ import { useBoardPomodoroState } from '../hooks/useBoardPomodoroState'
 import { useGoogleAuth } from '../hooks/useGoogleAuth'
 import { useMissedBlockRecovery } from '../hooks/useMissedBlockRecovery'
 import { useToast } from '../context/ToastContext'
-import { todayISO, getWeekStart, addDays, formatDateLong, formatSeconds, localDateKey, localDateTimeFromMinutes } from '../utils/dateHelpers'
+import { todayISO, getWeekStart, addDays, formatDateLong, formatSeconds, localDateKey, localDateTimeFromMinutes, isEndOfDayRolloverTime } from '../utils/dateHelpers'
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
 const CONTEXT_MENU_WIDTH = 160
@@ -33,7 +34,7 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
   const weekStart = getWeekStart(currentDate)
   const { events, loading, syncing, syncFromGoogle, createEvent, updateEvent, deleteEvent, undoDeleteEvent, reload } = useCalendarEvents()
   const { isBreak, isRunning, timeLeft } = useBoardPomodoroState()
-  const { connected, loading: authLoading, connect } = useGoogleAuth()
+  const { connected, connect } = useGoogleAuth()
   const recovery = useMissedBlockRecovery()
   const { addToast } = useToast()
 
@@ -271,13 +272,13 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
     }
   }
 
-  async function handleRecoveryDefer() {
+  async function handleEndOfDayRollover() {
     try {
-      await recovery.deferToTomorrow()
+      await recovery.rolloverToTomorrow()
       await reload()
-      addToast('Deferred to tomorrow', 'success')
+      addToast('Moved unfinished work to tomorrow', 'success')
     } catch (err) {
-      addToast(err.message || 'Failed to defer block', 'error')
+      addToast(err.message || 'Failed to move work to tomorrow', 'error')
       await recovery.reload()
     }
   }
@@ -296,6 +297,7 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
     : view === 'week'
     ? `${formatDateLong(weekStart)} – ${formatDateLong(addDays(weekStart, 6))}`
     : formatDateLong(currentDate)
+  const showEndOfDayRollover = isEndOfDayRolloverTime() && recovery.rollover
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-notion-bg">
@@ -384,7 +386,17 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
         </div>
       </div>
 
-      {recovery.block && (
+      {showEndOfDayRollover && (
+        <div className="flex-shrink-0 px-4 pt-3">
+          <EndOfDayRolloverCard
+            rollover={recovery.rollover}
+            actionLoading={recovery.actionLoading}
+            onMoveToTomorrow={() => { void handleEndOfDayRollover() }}
+          />
+        </div>
+      )}
+
+      {!showEndOfDayRollover && recovery.block && (
         <div className="flex-shrink-0 px-4 pt-3">
           <MissedBlockRecoveryCard
             block={recovery.block}
@@ -394,7 +406,6 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
             onDismiss={() => { void handleRecoveryDismiss() }}
             onStartSprintNow={() => { void handleRecoveryStartSprint() }}
             onMoveToNextOpenSlot={() => { void handleRecoveryMove() }}
-            onDeferToTomorrow={() => { void handleRecoveryDefer() }}
           />
         </div>
       )}

@@ -30,7 +30,6 @@ export function MissedBlockRecoveryCard({
   onDismiss,
   onStartSprintNow,
   onMoveToNextOpenSlot,
-  onDeferToTomorrow,
 }) {
   if (!block) return null
 
@@ -77,15 +76,6 @@ export function MissedBlockRecoveryCard({
           title={slotLabel(block.recovery_options?.move_next_open_slot, 'No later slot available today')}
         >
           {actionLoading === 'move' ? 'Moving...' : 'Move to next open slot'}
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={onDeferToTomorrow}
-          disabled={actionLoading !== '' || !block.recovery_options?.defer_tomorrow}
-          title={slotLabel(block.recovery_options?.defer_tomorrow, 'No open slot found tomorrow')}
-        >
-          {actionLoading === 'defer' ? 'Deferring...' : 'Defer to tomorrow'}
         </Button>
       </div>
     </div>

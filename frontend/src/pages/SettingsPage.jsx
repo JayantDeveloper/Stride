@@ -1,40 +1,47 @@
-import { useEffect } from 'react'
-import { useSearchParams } from 'react-router-dom'
 import { Button } from '../components/shared/Button'
 import { Spinner } from '../components/shared/Spinner'
 import { useGoogleAuth } from '../hooks/useGoogleAuth'
 import { useToast } from '../context/ToastContext'
 
-export default function SettingsPage() {
-  const { connected, email, loading, connect, disconnect, refresh } = useGoogleAuth()
+export default function SettingsPage({ session, onSignOut }) {
+  const { connected, loading, connect, disconnect } = useGoogleAuth()
   const { addToast } = useToast()
-  const [searchParams, setSearchParams] = useSearchParams()
-
-  // Handle OAuth redirect result
-  useEffect(() => {
-    const connectedParam = searchParams.get('connected')
-    const errorParam = searchParams.get('error')
-    const emailParam = searchParams.get('email')
-
-    if (connectedParam === 'true') {
-      addToast(`Connected as ${emailParam ?? 'Google account'}`, 'success')
-      refresh()
-      setSearchParams({})
-    } else if (errorParam) {
-      addToast(`Connection failed: ${errorParam}`, 'error')
-      setSearchParams({})
-    }
-  }, [searchParams])
 
   async function handleDisconnect() {
     await disconnect()
     addToast('Google Calendar disconnected', 'info')
   }
 
+  async function handleConnect() {
+    await connect({
+      callbackURL: `${window.location.origin}${window.location.pathname}?settings=1`,
+    })
+  }
+
+  async function handleSignOut() {
+    await onSignOut?.()
+    addToast('Signed out', 'info')
+  }
+
   return (
     <div className="max-w-2xl mx-auto px-6 py-8">
       <h1 className="text-2xl font-bold text-gray-100 mb-2">Settings</h1>
-      <p className="text-sm text-gray-500 mb-8">Configure your integrations and preferences.</p>
+      <p className="text-sm text-gray-500 mb-8">Manage your account, login, and integrations.</p>
+
+      <section className="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-base font-semibold text-gray-100">Account</h2>
+            <p className="text-xs text-gray-500">Signed in as {session?.user?.email ?? 'Unknown user'}</p>
+            {session?.user?.name && (
+              <p className="text-sm text-gray-400 mt-2">{session.user.name}</p>
+            )}
+          </div>
+          <Button variant="secondary" size="sm" onClick={() => { void handleSignOut() }}>
+            Sign out
+          </Button>
+        </div>
+      </section>
 
       {/* Google Calendar */}
       <section className="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
@@ -57,7 +64,7 @@ export default function SettingsPage() {
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2 bg-green-950 border border-green-800 rounded-lg px-3 py-2">
               <span className="text-green-400 text-sm">✓</span>
-              <span className="text-sm text-green-300">Connected as <strong>{email}</strong></span>
+              <span className="text-sm text-green-300">Google Calendar connected</span>
             </div>
             <p className="text-xs text-gray-500">
               Your calendar events are synced. Go to the Calendar page and click "Sync" to refresh.
@@ -78,7 +85,7 @@ export default function SettingsPage() {
               <p>3. Create OAuth 2.0 credentials</p>
               <p>4. Add credentials to backend/.env</p>
             </div>
-            <Button onClick={connect}>
+            <Button onClick={() => { void handleConnect() }}>
               Connect Google Calendar
             </Button>
           </div>
@@ -109,8 +116,9 @@ export default function SettingsPage() {
         <h2 className="text-base font-semibold text-gray-100 mb-3">Getting Started</h2>
         <ol className="flex flex-col gap-2 text-sm text-gray-400 list-decimal list-inside">
           <li>Copy <span className="text-gray-300 font-mono text-xs">backend/.env.example</span> to <span className="text-gray-300 font-mono text-xs">backend/.env</span></li>
-          <li>Fill in your Google OAuth credentials and OpenAI API key</li>
+          <li>Set <span className="text-gray-300 font-mono text-xs">DATABASE_URL</span>, <span className="text-gray-300 font-mono text-xs">BETTER_AUTH_SECRET</span>, Google OAuth credentials, and OpenAI API key</li>
           <li>Restart the backend server</li>
+          <li>Create an account or sign in from the login screen</li>
           <li>Connect Google Calendar above</li>
           <li>Go to the Calendar page and sync your events</li>
           <li>Create tasks and use "Add to Calendar" to schedule them with AI</li>

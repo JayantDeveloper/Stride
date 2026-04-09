@@ -41,7 +41,7 @@ export function useTasks(filters = {}) {
         due_date: fields.due_date ?? null,
         scheduled_date: fields.scheduled_date ?? null,
         tags: fields.tags ?? [],
-        allow_split: fields.allow_split ?? 1,
+        allow_split: fields.allow_split ?? 0,
       },
     })
     setTasks(prev => [...prev, data.task])

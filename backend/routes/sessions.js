@@ -9,16 +9,17 @@ const router = express.Router();
 // GET /api/sessions/active — must be before /:id to avoid route conflict
 router.get("/active", async (req, res) => {
   const session = await dbGet(
-    "SELECT * FROM focus_sessions WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1"
+    "SELECT * FROM focus_sessions WHERE user_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
+    [req.user.id]
   );
   res.json({ session: session || null });
 });
 
 // GET /api/sessions?date=YYYY-MM-DD&task_id=...
 router.get("/", async (req, res) => {
-  let query = "SELECT * FROM focus_sessions";
+  let query = "SELECT * FROM focus_sessions WHERE user_id = ?";
   const conditions = [];
-  const params = [];
+  const params = [req.user.id];
 
   if (req.query.date) {
     conditions.push("date(started_at) = date(?)");
@@ -29,7 +30,7 @@ router.get("/", async (req, res) => {
     params.push(req.query.task_id);
   }
 
-  if (conditions.length) query += " WHERE " + conditions.join(" AND ");
+  if (conditions.length) query += " AND " + conditions.join(" AND ");
   query += " ORDER BY started_at DESC";
 
   const sessions = await dbAll(query, params);
@@ -39,13 +40,14 @@ router.get("/", async (req, res) => {
 // POST /api/sessions — start a session
 router.post("/", async (req, res) => {
   await dbRun(`
-    UPDATE focus_sessions SET ended_at = datetime('now'), outcome = 'interrupted'
-    WHERE ended_at IS NULL
-  `);
+    UPDATE focus_sessions SET ended_at = CURRENT_TIMESTAMP, outcome = 'interrupted'
+    WHERE ended_at IS NULL AND user_id = ?
+  `, [req.user.id]);
 
   const id = crypto.randomUUID();
   const session = {
     id,
+    user_id: req.user.id,
     task_id: req.body.task_id ?? null,
     started_at: new Date().toISOString(),
     planned_mins: req.body.planned_mins ?? 25,
@@ -53,17 +55,20 @@ router.post("/", async (req, res) => {
   };
 
   await dbRun(`
-    INSERT INTO focus_sessions (id, task_id, started_at, planned_mins, session_type)
-    VALUES (?, ?, ?, ?, ?)
-  `, [session.id, session.task_id, session.started_at, session.planned_mins, session.session_type]);
+    INSERT INTO focus_sessions (id, user_id, task_id, started_at, planned_mins, session_type)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `, [session.id, session.user_id, session.task_id, session.started_at, session.planned_mins, session.session_type]);
 
-  const created = await dbGet("SELECT * FROM focus_sessions WHERE id = ?", [id]);
+  const created = await dbGet("SELECT * FROM focus_sessions WHERE id = ? AND user_id = ?", [id, req.user.id]);
   res.status(201).json({ session: created });
 });
 
 // PATCH /api/sessions/:id — end/update a session
 router.patch("/:id", async (req, res) => {
-  const session = await dbGet("SELECT * FROM focus_sessions WHERE id = ?", [req.params.id]);
+  const session = await dbGet(
+    "SELECT * FROM focus_sessions WHERE id = ? AND user_id = ?",
+    [req.params.id, req.user.id]
+  );
   if (!session) return res.status(404).json({ error: "Session not found" });
 
   const updates = [];
@@ -83,10 +88,13 @@ router.patch("/:id", async (req, res) => {
   }
 
   if (updates.length === 0) return res.json({ session });
-  params.push(req.params.id);
+  params.push(req.params.id, req.user.id);
 
-  await dbRun(`UPDATE focus_sessions SET ${updates.join(", ")} WHERE id = ?`, params);
-  const updated = await dbGet("SELECT * FROM focus_sessions WHERE id = ?", [req.params.id]);
+  await dbRun(`UPDATE focus_sessions SET ${updates.join(", ")} WHERE id = ? AND user_id = ?`, params);
+  const updated = await dbGet(
+    "SELECT * FROM focus_sessions WHERE id = ? AND user_id = ?",
+    [req.params.id, req.user.id]
+  );
   res.json({ session: updated });
 });
 

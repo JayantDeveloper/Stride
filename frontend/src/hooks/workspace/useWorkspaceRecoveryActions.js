@@ -38,13 +38,13 @@ export function useWorkspaceRecoveryActions({
     }
   }, [addToast, recovery, refreshWorkspace])
 
-  const handleRecoveryDefer = useCallback(async () => {
+  const handleEndOfDayRollover = useCallback(async () => {
     try {
-      await recovery.deferToTomorrow()
+      await recovery.rolloverToTomorrow()
       refreshWorkspace()
-      addToast('Deferred to tomorrow', 'success')
+      addToast('Moved unfinished work to tomorrow', 'success')
     } catch (error) {
-      addToast(error.message || 'Failed to defer block', 'error')
+      addToast(error.message || 'Failed to move work to tomorrow', 'error')
       await recovery.reload()
     }
   }, [addToast, recovery, refreshWorkspace])
@@ -60,12 +60,13 @@ export function useWorkspaceRecoveryActions({
 
   return {
     block: recovery.block,
+    rollover: recovery.rollover,
     recommendation: recovery.recommendation,
     aiLoading: recovery.aiLoading,
     actionLoading: recovery.actionLoading,
     handleRecoveryStartSprint,
     handleRecoveryMove,
-    handleRecoveryDefer,
+    handleEndOfDayRollover,
     handleRecoveryDismiss,
   }
 }

@@ -15,7 +15,6 @@ export function useWorkspaceTaskBoard({
 }) {
   const [filterStatus, setFilterStatus] = useState('active')
   const [sortBy, setSortBy] = useState('priority')
-  const [editingNewIds, setEditingNewIds] = useState([])
   const [editingTask, setEditingTask] = useState(null)
   const [taskModalOpen, setTaskModalOpen] = useState(false)
   const [draggedId, setDraggedId] = useState(null)
@@ -41,8 +40,8 @@ export function useWorkspaceTaskBoard({
 
   async function handleAddTask() {
     setFilterStatus('active')
-    const task = await createTask()
-    setEditingNewIds(previous => [...previous, task.id])
+    setSortBy('position')
+    await createTask({ allow_split: 0 })
   }
 
   function openTaskModal(task) {
@@ -57,12 +56,9 @@ export function useWorkspaceTaskBoard({
 
   async function handleNewTaskSave(taskId, fields) {
     await updateTask(taskId, fields)
-    setEditingNewIds(previous => previous.filter(id => id !== taskId))
   }
 
-  function handleNewTaskDone(taskId) {
-    setEditingNewIds(previous => previous.filter(id => id !== taskId))
-  }
+  function handleNewTaskDone() {}
 
   async function handleModalSave(fields) {
     if (!editingTask) return
@@ -100,7 +96,7 @@ export function useWorkspaceTaskBoard({
     counts,
     draggedId,
     filteredTasks,
-    editingTaskIds: editingNewIds,
+    editingTaskIds: [],
     taskModalOpen,
     editingTask,
     setFilterStatus,
