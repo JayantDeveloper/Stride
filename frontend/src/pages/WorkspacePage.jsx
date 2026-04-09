@@ -112,8 +112,9 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
     setTimerStartRequest(externalSprintRequest)
   }, [externalSprintRequest])
 
+  const editingIdSet = new Set(editingNewIds)
+
   const filtered = tasks
-    .filter(t => !editingNewIds.includes(t.id))
     .filter(t => {
       if (filterStatus === 'active') return t.status !== 'Done'
       if (filterStatus === 'done') return t.status === 'Done'
@@ -132,6 +133,7 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
   }
 
   async function handleAddTask() {
+    setFilterStatus('active')
     const task = await createTask()
     setEditingNewIds(prev => [...prev, task.id])
   }
@@ -446,6 +448,9 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
                 onChange={e => setOrganizeDate(e.target.value)}
               />
               <div className="flex-1" />
+              <Button variant="secondary" size="sm" onClick={() => setShowOrganize(false)}>
+                Cancel
+              </Button>
               <Button variant="primary" size="sm" onClick={handleOrganize} disabled={organizing}>
                 {organizing ? <><Spinner size="sm" /> Scheduling...</> : 'Push'}
               </Button>
@@ -471,25 +476,11 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
         {/* Column headers */}
         <TaskListHeader />
 
-        {/* Inline editors for newly created tasks */}
-        {editingNewIds.map(taskId => {
-          const task = tasks.find(t => t.id === taskId)
-          if (!task) return null
-          return (
-            <InlineTaskRow
-              key={taskId}
-              task={task}
-              onSave={fields => handleNewTaskSave(taskId, fields)}
-              onCancel={() => handleNewTaskDone(taskId)}
-            />
-          )
-        })}
-
         {/* Task list */}
         <div className="flex-1 overflow-y-auto">
           {loading ? (
             <div className="flex justify-center py-12"><Spinner /></div>
-          ) : filtered.length === 0 && editingNewIds.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-notion-muted">
               <p className="text-2xl mb-2 opacity-30">✓</p>
               <p className="text-sm">{filterStatus === 'active' ? 'All caught up.' : 'No tasks here.'}</p>
@@ -501,21 +492,34 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
             </div>
           ) : (
             <div>
-              {filtered.map(task => (
-                <TaskRow
-                  key={task.id}
-                  task={task}
-                  isDragging={draggedId === task.id}
-                  highlight={task.id === activeTask?.id ? activeRowHighlight : null}
-                  onEdit={t => { setEditingTask(t); setTaskModalOpen(true) }}
-                  onDelete={handleDelete}
-                  onFieldSave={handleFieldSave}
-                  onDragStart={() => setDraggedId(task.id)}
-                  onDragOver={() => {}}
-                  onDrop={() => { if (draggedId && draggedId !== task.id) reorderTasks(draggedId, task.id) }}
-                  onDragEnd={() => setDraggedId(null)}
-                />
-              ))}
+              {filtered.map(task => {
+                if (editingIdSet.has(task.id)) {
+                  return (
+                    <InlineTaskRow
+                      key={task.id}
+                      task={task}
+                      onSave={fields => handleNewTaskSave(task.id, fields)}
+                      onCancel={() => handleNewTaskDone(task.id)}
+                    />
+                  )
+                }
+
+                return (
+                  <TaskRow
+                    key={task.id}
+                    task={task}
+                    isDragging={draggedId === task.id}
+                    highlight={task.id === activeTask?.id ? activeRowHighlight : null}
+                    onEdit={t => { setEditingTask(t); setTaskModalOpen(true) }}
+                    onDelete={handleDelete}
+                    onFieldSave={handleFieldSave}
+                    onDragStart={() => setDraggedId(task.id)}
+                    onDragOver={() => {}}
+                    onDrop={() => { if (draggedId && draggedId !== task.id) reorderTasks(draggedId, task.id) }}
+                    onDragEnd={() => setDraggedId(null)}
+                  />
+                )
+              })}
             </div>
           )}
         </div>

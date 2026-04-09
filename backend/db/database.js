@@ -63,6 +63,7 @@ async function initializeSchema() {
       breakdown_json  TEXT DEFAULT '',
       current_subtask_index INTEGER NOT NULL DEFAULT 0,
       current_sprint_goal TEXT DEFAULT '',
+      allow_split     INTEGER NOT NULL DEFAULT 1,
       position        INTEGER NOT NULL DEFAULT 0,
       calendar_event_id TEXT,
       created_at      TEXT NOT NULL DEFAULT (datetime('now')),
@@ -156,7 +157,7 @@ async function initializeSchema() {
     ["breakdown_json", "TEXT DEFAULT ''"],
     ["current_subtask_index", "INTEGER NOT NULL DEFAULT 0"],
     ["current_sprint_goal", "TEXT DEFAULT ''"],
-    ["allow_split", "INTEGER NOT NULL DEFAULT 0"],
+    ["allow_split", "INTEGER NOT NULL DEFAULT 1"],
   ]);
 
   await ensureColumns("calendar_events", [

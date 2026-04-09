@@ -218,6 +218,7 @@ export function TaskRow({
 
   return (
     <div
+      data-testid={`task-row-${task.id}`}
       onDragOver={e => { e.preventDefault(); onDragOver?.() }}
       onDrop={e => {
         e.preventDefault()

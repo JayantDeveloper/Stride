@@ -33,6 +33,7 @@ export function InlineTaskRow({ task, onSave, onCancel }) {
     difficulty:      task.difficulty ?? 'Medium',
     estimated_hours: task.estimated_mins ? task.estimated_mins / 60 : 1,
     due_date:        task.due_date ?? '',
+    allow_split:     task.allow_split ?? 1,
   })
   const titleRef = useRef(null)
   const saving = useRef(false)
@@ -60,6 +61,7 @@ export function InlineTaskRow({ task, onSave, onCancel }) {
         difficulty:    form.difficulty,
         estimated_mins: Math.round((parseFloat(form.estimated_hours) || 1) * 60),
         due_date:      form.due_date || null,
+        allow_split:   form.allow_split ? 1 : 0,
       })
     } catch {
       saving.current = false
@@ -77,6 +79,7 @@ export function InlineTaskRow({ task, onSave, onCancel }) {
 
   return (
     <div
+      data-testid={`inline-task-row-${task.id}`}
       className="flex items-stretch"
       onBlur={(e) => {
         if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget)) return
@@ -160,6 +163,21 @@ export function InlineTaskRow({ task, onSave, onCancel }) {
           onChange={e => set('due_date', e.target.value)}
           onKeyDown={handleKeyDown}
         />
+      </Cell>
+
+      <Cell col="split" border>
+        <button
+          type="button"
+          title={form.allow_split ? 'Split: task can be broken across gaps (4-min margins)' : 'Solid: task placed as one uninterrupted block'}
+          onClick={() => set('allow_split', form.allow_split ? 0 : 1)}
+          className="w-full text-xs font-medium rounded px-1 py-0.5 transition-colors"
+          style={{
+            background: form.allow_split ? 'rgba(99,102,241,0.15)' : 'rgba(107,114,128,0.10)',
+            color: form.allow_split ? '#818CF8' : '#6B7280',
+          }}
+        >
+          {form.allow_split ? 'Split' : 'Solid'}
+        </button>
       </Cell>
 
       <Cell col="actions" border={false}>
