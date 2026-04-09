@@ -56,17 +56,18 @@ router.post("/", async (req, res) => {
     current_sprint_goal: req.body.current_sprint_goal ?? "",
     position,
     calendar_event_id: null,
+    allow_split: req.body.allow_split ?? 1,
   };
 
   await dbRun(`
     INSERT INTO tasks (id, title, description, status, priority, difficulty,
       estimated_mins, due_date, scheduled_date, tags, next_step, breakdown_json,
-      current_subtask_index, current_sprint_goal, position, calendar_event_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      current_subtask_index, current_sprint_goal, position, calendar_event_id, allow_split)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [task.id, task.title, task.description, task.status, task.priority, task.difficulty,
       task.estimated_mins, task.due_date, task.scheduled_date, task.tags, task.next_step,
       task.breakdown_json, task.current_subtask_index, task.current_sprint_goal,
-      task.position, task.calendar_event_id]);
+      task.position, task.calendar_event_id, task.allow_split]);
 
   const created = await dbGet("SELECT * FROM tasks WHERE id = ?", [id]);
   res.status(201).json({ task: { ...created, tags: safeParseJSON(created.tags, []) } });
