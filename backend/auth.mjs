@@ -19,19 +19,24 @@ const authDatabase = {
   type: "postgres",
 };
 
+const isProduction = process.env.NODE_ENV === "production";
 const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
-const backendUrl = process.env.BETTER_AUTH_URL || `http://localhost:${process.env.PORT || 5001}`;
+const backendUrl =
+  process.env.BETTER_AUTH_URL ||
+  process.env.RENDER_EXTERNAL_URL ||
+  `http://localhost:${process.env.PORT || 5001}`;
 const authSecret =
   process.env.BETTER_AUTH_SECRET ||
   process.env.SESSION_SECRET ||
   "better-auth-dev-secret-0123456789abcdef0123456789";
+const trustedOrigins = [...new Set([frontendUrl, backendUrl].filter(Boolean))];
 
 export const auth = betterAuth({
   baseURL: backendUrl,
   basePath: "/api/auth",
   secret: authSecret,
   database: authDatabase,
-  trustedOrigins: [frontendUrl, backendUrl],
+  trustedOrigins,
   emailAndPassword: {
     enabled: true,
   },
@@ -54,6 +59,12 @@ export const auth = betterAuth({
   },
   rateLimit: {
     enabled: false,
+  },
+  advanced: {
+    useSecureCookies: isProduction,
+    defaultCookieAttributes: isProduction
+      ? { sameSite: "none" }
+      : undefined,
   },
 });
 
