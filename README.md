@@ -1,4 +1,4 @@
-# focus-exec — AI Productivity Execution System
+# Stride — AI Productivity Execution System
 
 A personal AI-powered productivity tool that combines Google Calendar, task management, an AI scheduling layer, and an accountability-focused execution loop.
 
@@ -78,33 +78,39 @@ Open http://localhost:5173
 ## Features
 
 ### Execute View (`/execute`)
+
 - Shows the next most important task (priority → due date → position)
 - Integrated Pomodoro timer with session tracking
 - Post-session accountability check-in with AI follow-up
 - Quick task actions (Done, Skip, Schedule, In Progress)
 
 ### Tasks (`/tasks`)
+
 - Full task CRUD with: title, description, priority, difficulty, duration, due date, tags
 - Filter by status and priority, sort by position/priority/due date
 - Drag-to-reorder
 - "Add to Calendar" → AI suggests 2-3 slots → one-click scheduling
 
 ### Calendar (`/calendar`)
+
 - Custom day/week view calendar (no external library)
 - Syncs events from Google Calendar
 - Visual distinction: Google events (gray) vs scheduled task blocks (indigo) vs completed (green)
 - Current time indicator
 
 ### Daily Planning (`/plan`)
+
 - Morning: write priorities → AI generates a realistic daily schedule
 - Evening: AI review of what got done and what to move tomorrow
 
 ### Analytics (`/analytics`)
+
 - Last 7 days: tasks completed, focus sessions, total focus time
 - Daily bar charts for focus minutes and task completions
 - Check-in outcome breakdown (finished / partial / blocked / skipped)
 
 ### Settings (`/settings`)
+
 - Google Calendar OAuth connect/disconnect
 - Setup instructions for API credentials
 
@@ -113,7 +119,7 @@ Open http://localhost:5173
 ## Architecture
 
 ```
-focus-exec/
+stride/
 ├── src/                    # React 19 + Vite frontend
 │   ├── pages/              # Route-level page components
 │   ├── components/         # Reusable UI components
@@ -144,12 +150,12 @@ focus-exec/
 
 All AI features require `OPENAI_API_KEY`. They use `gpt-4o`.
 
-| Feature | Endpoint | What it does |
-|---------|----------|-------------|
-| Slot suggestions | `POST /api/ai/suggest-slots` | 2-3 best times to schedule a task |
-| Day planning | `POST /api/ai/schedule-day` | Full schedule for the day |
-| Check-in response | `POST /api/ai/checkin-response` | Accountability follow-up |
-| Evening review | `POST /api/ai/evening-review` | End-of-day summary |
+| Feature           | Endpoint                        | What it does                      |
+| ----------------- | ------------------------------- | --------------------------------- |
+| Slot suggestions  | `POST /api/ai/suggest-slots`    | 2-3 best times to schedule a task |
+| Day planning      | `POST /api/ai/schedule-day`     | Full schedule for the day         |
+| Check-in response | `POST /api/ai/checkin-response` | Accountability follow-up          |
+| Evening review    | `POST /api/ai/evening-review`   | End-of-day summary                |
 
 AI features degrade gracefully — the app works without an API key, AI buttons just won't return results.
 

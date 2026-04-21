@@ -5,7 +5,7 @@ const express = require("express");
 test("POST /api/tasks defaults allow_split to 0 when the client omits it", async (t) => {
   const originalDatabaseUrl = process.env.DATABASE_URL;
 
-  process.env.DATABASE_URL = `pg-mem://focus-exec-tasks-${Date.now()}-${Math.random()}`;
+  process.env.DATABASE_URL = `pg-mem://stride-tasks-${Date.now()}-${Math.random()}`;
   delete process.env.POSTGRES_URL;
   delete require.cache[require.resolve("../db/postgres")];
   delete require.cache[require.resolve("../db/database")];
@@ -40,17 +40,23 @@ test("POST /api/tasks defaults allow_split to 0 when the client omits it", async
     }
   });
 
-  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/tasks`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title: "Route-created task" }),
-  });
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/tasks`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Route-created task" }),
+    },
+  );
   const body = await response.json();
 
   assert.equal(response.status, 201);
   assert.equal(body.task.allow_split, 0);
   assert.equal(body.task.user_id, "test-user-id");
 
-  const stored = await dbGet("SELECT allow_split FROM tasks WHERE id = ? AND user_id = ?", [body.task.id, "test-user-id"]);
+  const stored = await dbGet(
+    "SELECT allow_split FROM tasks WHERE id = ? AND user_id = ?",
+    [body.task.id, "test-user-id"],
+  );
   assert.equal(stored.allow_split, 0);
 });

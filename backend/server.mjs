@@ -7,7 +7,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import cors from "cors";
 import express from "express";
 
-import { authHandler, ensureAuthSchema, getSessionFromRequest } from "./auth.mjs";
+import {
+  authHandler,
+  ensureAuthSchema,
+  getSessionFromRequest,
+} from "./auth.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -53,10 +57,12 @@ export async function createApp() {
 
   const app = express();
 
-  app.use(cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
-    credentials: true,
-  }));
+  app.use(
+    cors({
+      origin: process.env.FRONTEND_URL || "http://localhost:5173",
+      credentials: true,
+    }),
+  );
 
   app.use("/api/auth", authHandler);
   app.use(express.json());
@@ -74,7 +80,7 @@ export async function createApp() {
   app.get("/api/pomodoro", requireAuth, async (req, res) => {
     const row = await dbGet(
       "SELECT value FROM user_settings WHERE user_id = ? AND key = 'pomodoro_state'",
-      [req.user.id]
+      [req.user.id],
     );
     const state = row ? JSON.parse(row.value) : {};
     res.json({ state });
@@ -87,7 +93,7 @@ export async function createApp() {
         VALUES (?, ?, ?)
         ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value
       `,
-      [req.user.id, "pomodoro_state", JSON.stringify(req.body)]
+      [req.user.id, "pomodoro_state", JSON.stringify(req.body)],
     );
     res.json({ ok: true });
   });
@@ -98,11 +104,14 @@ export async function createApp() {
 export async function start() {
   const app = await createApp();
   return app.listen(PORT, "0.0.0.0", () => {
-    console.log(`focus-exec backend on http://localhost:${PORT}`);
+    console.log(`stride backend on http://localhost:${PORT}`);
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   start().catch((error) => {
     console.error("Failed to start server:", error);
     process.exit(1);

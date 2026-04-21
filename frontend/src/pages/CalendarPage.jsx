@@ -1,303 +1,306 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from "react";
 
-import { DayView } from '../components/calendar/DayView'
-import { WeekView } from '../components/calendar/WeekView'
-import { MonthView } from '../components/calendar/MonthView'
-import { CalendarEventModal } from '../components/calendar/CalendarEventModal'
-import { QuickCreatePopover } from '../components/calendar/QuickCreatePopover'
-import { Button } from '../components/shared/Button'
-import { EndOfDayRolloverCard } from '../components/shared/EndOfDayRolloverCard'
-import { MissedBlockRecoveryCard } from '../components/shared/MissedBlockRecoveryCard'
-import { Spinner } from '../components/shared/Spinner'
-import { useCalendarEvents } from '../hooks/useCalendarEvents'
-import { useBoardPomodoroState } from '../hooks/useBoardPomodoroState'
-import { useGoogleAuth } from '../hooks/useGoogleAuth'
-import { useMissedBlockRecovery } from '../hooks/useMissedBlockRecovery'
-import { useToast } from '../context/ToastContext'
-import { todayISO, getWeekStart, addDays, formatDateLong, formatSeconds, localDateKey, localDateTimeFromMinutes, isEndOfDayRolloverTime } from '../utils/dateHelpers'
+import { DayView } from "../components/calendar/DayView";
+import { WeekView } from "../components/calendar/WeekView";
+import { MonthView } from "../components/calendar/MonthView";
+import { CalendarEventModal } from "../components/calendar/CalendarEventModal";
+import { QuickCreatePopover } from "../components/calendar/QuickCreatePopover";
+import { Button } from "../components/shared/Button";
+import { Spinner } from "../components/shared/Spinner";
+import { useCalendarEvents } from "../hooks/useCalendarEvents";
+import { useBoardPomodoroState } from "../hooks/useBoardPomodoroState";
+import { useGoogleAuth } from "../hooks/useGoogleAuth";
+import { useToast } from "../context/ToastContext";
+import {
+  todayISO,
+  getWeekStart,
+  addDays,
+  formatDateLong,
+  formatSeconds,
+  localDateKey,
+  localDateTimeFromMinutes,
+} from "../utils/dateHelpers";
 
-const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
-const CONTEXT_MENU_WIDTH = 160
-const CONTEXT_MENU_HEIGHT = 88
-const VIEWPORT_PADDING = 12
+const MONTH_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+const CONTEXT_MENU_WIDTH = 160;
+const CONTEXT_MENU_HEIGHT = 88;
+const VIEWPORT_PADDING = 12;
 
 export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
-  const [view, setView] = useState('week') // 'month' | 'week' | 'day'
-  const [currentDate, setCurrentDate] = useState(todayISO())
-  const [modalOpen, setModalOpen] = useState(false)
-  const [selectedEvent, setSelectedEvent] = useState(null)
-  const [defaultSlot, setDefaultSlot] = useState(null)
-  const [quickCreate, setQuickCreate] = useState(null) // { slot, x, y }
-  const [contextMenu, setContextMenu] = useState(null) // { event, x, y }
-  const [duplicateSource, setDuplicateSource] = useState(null)
+  const [view, setView] = useState("week"); // 'month' | 'week' | 'day'
+  const [currentDate, setCurrentDate] = useState(todayISO());
+  const [modalOpen, setModalOpen] = useState(false);
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [defaultSlot, setDefaultSlot] = useState(null);
+  const [quickCreate, setQuickCreate] = useState(null); // { slot, x, y }
+  const [contextMenu, setContextMenu] = useState(null); // { event, x, y }
+  const [duplicateSource, setDuplicateSource] = useState(null);
 
-  const weekStart = getWeekStart(currentDate)
-  const { events, loading, syncing, syncFromGoogle, createEvent, updateEvent, deleteEvent, undoDeleteEvent, reload } = useCalendarEvents()
-  const { isBreak, isRunning, timeLeft } = useBoardPomodoroState()
-  const { connected, connect } = useGoogleAuth()
-  const recovery = useMissedBlockRecovery()
-  const { addToast } = useToast()
+  const weekStart = getWeekStart(currentDate);
+  const {
+    events,
+    loading,
+    syncing,
+    syncFromGoogle,
+    createEvent,
+    updateEvent,
+    deleteEvent,
+    undoDeleteEvent,
+    reload,
+  } = useCalendarEvents();
+  const { isBreak, isRunning, timeLeft } = useBoardPomodoroState();
+  const { connected, connect } = useGoogleAuth();
+  const { addToast } = useToast();
 
-  const [year, month] = currentDate.split('-').map(Number)
-  const monthYear = `${MONTH_NAMES[month - 1]} ${year}`
+  const [year, month] = currentDate.split("-").map(Number);
+  const monthYear = `${MONTH_NAMES[month - 1]} ${year}`;
 
   // Undo calendar event deletion: Cmd+Z (Mac) / Ctrl+Z (Windows)
   useEffect(() => {
-    const handler = e => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
-        e.preventDefault()
-        undoDeleteEvent()
+    const handler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undoDeleteEvent();
       }
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [undoDeleteEvent])
-
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [undoDeleteEvent]);
 
   useEffect(() => {
-    if (!contextMenu) return
-    const handleClose = () => setContextMenu(null)
+    if (!contextMenu) return;
+    const handleClose = () => setContextMenu(null);
     const handleEscape = (e) => {
-      if (e.key === 'Escape') setContextMenu(null)
-    }
-    document.addEventListener('click', handleClose)
-    document.addEventListener('contextmenu', handleClose)
-    document.addEventListener('keydown', handleEscape)
+      if (e.key === "Escape") setContextMenu(null);
+    };
+    document.addEventListener("click", handleClose);
+    document.addEventListener("contextmenu", handleClose);
+    document.addEventListener("keydown", handleEscape);
     return () => {
-      document.removeEventListener('click', handleClose)
-      document.removeEventListener('contextmenu', handleClose)
-      document.removeEventListener('keydown', handleEscape)
-    }
-  }, [contextMenu])
+      document.removeEventListener("click", handleClose);
+      document.removeEventListener("contextmenu", handleClose);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [contextMenu]);
 
   useEffect(() => {
-    if (!duplicateSource) return
+    if (!duplicateSource) return;
     const handleEscape = (e) => {
-      if (e.key === 'Escape') {
-        setDuplicateSource(null)
-        addToast('Duplicate canceled', 'info')
+      if (e.key === "Escape") {
+        setDuplicateSource(null);
+        addToast("Duplicate canceled", "info");
       }
-    }
-    document.addEventListener('keydown', handleEscape)
-    return () => document.removeEventListener('keydown', handleEscape)
-  }, [duplicateSource, addToast])
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [duplicateSource, addToast]);
 
   async function handleSync() {
     try {
-      const count = await syncFromGoogle()
-      addToast(`Synced ${count} event${count !== 1 ? 's' : ''} from Google Calendar`, 'success')
+      const count = await syncFromGoogle();
+      addToast(
+        `Synced ${count} event${count !== 1 ? "s" : ""} from Google Calendar`,
+        "success",
+      );
     } catch (err) {
-      addToast(err.message, 'error')
+      addToast(err.message, "error");
     }
   }
 
   function navigate(direction) {
-    if (view === 'month') {
-      const d = new Date(`${currentDate}T00:00:00`)
-      d.setMonth(d.getMonth() + (direction === 'next' ? 1 : -1))
-      setCurrentDate(localDateKey(d))
+    if (view === "month") {
+      const d = new Date(`${currentDate}T00:00:00`);
+      d.setMonth(d.getMonth() + (direction === "next" ? 1 : -1));
+      setCurrentDate(localDateKey(d));
     } else {
-      const delta = direction === 'next' ? (view === 'week' ? 7 : 1) : (view === 'week' ? -7 : -1)
-      setCurrentDate(prev => addDays(prev, delta))
+      const delta =
+        direction === "next"
+          ? view === "week"
+            ? 7
+            : 1
+          : view === "week"
+            ? -7
+            : -1;
+      setCurrentDate((prev) => addDays(prev, delta));
     }
   }
 
   function goToToday() {
-    setCurrentDate(todayISO())
+    setCurrentDate(todayISO());
   }
 
   function openCreateModal(slot = null, e = null) {
     if (duplicateSource && slot) {
-      void placeDuplicatedEvent(slot.start_time)
-      return
+      void placeDuplicatedEvent(slot.start_time);
+      return;
     }
     if (e) {
-      setQuickCreate({ slot, x: e.clientX, y: e.clientY })
+      setQuickCreate({ slot, x: e.clientX, y: e.clientY });
     } else {
-      setSelectedEvent(null)
-      setDefaultSlot(slot)
-      setModalOpen(true)
+      setSelectedEvent(null);
+      setDefaultSlot(slot);
+      setModalOpen(true);
     }
   }
 
   function openFullModalFromQuick(prefill = {}) {
-    setQuickCreate(null)
-    setSelectedEvent(null)
-    setDefaultSlot(prefill.start_time ? { start_time: prefill.start_time, end_time: prefill.end_time, title: prefill.title } : null)
-    setModalOpen(true)
+    setQuickCreate(null);
+    setSelectedEvent(null);
+    setDefaultSlot(
+      prefill.start_time
+        ? {
+            start_time: prefill.start_time,
+            end_time: prefill.end_time,
+            title: prefill.title,
+          }
+        : null,
+    );
+    setModalOpen(true);
   }
 
   function openEditModal(event) {
-    setContextMenu(null)
-    setSelectedEvent(event)
-    setDefaultSlot(null)
-    setModalOpen(true)
+    setContextMenu(null);
+    setSelectedEvent(event);
+    setDefaultSlot(null);
+    setModalOpen(true);
   }
 
   // Month view day click: 'select' = switch to day view, 'drop' = move event
   function handleMonthDayClick(action, dateStr, eventId) {
-    if (action === 'select') {
+    if (action === "select") {
       if (duplicateSource) {
-        const originalStart = new Date(duplicateSource.start_time)
-        const start = new Date(`${dateStr}T${originalStart.toTimeString().slice(0, 8)}`)
-        void placeDuplicatedEvent(start.toISOString())
-        return
+        const originalStart = new Date(duplicateSource.start_time);
+        const start = new Date(
+          `${dateStr}T${originalStart.toTimeString().slice(0, 8)}`,
+        );
+        void placeDuplicatedEvent(start.toISOString());
+        return;
       }
-      setCurrentDate(dateStr)
-      setView('day')
-    } else if (action === 'drop' && eventId) {
-      const event = events.find(e => e.id === eventId)
-      if (!event) return
-      const origStart = new Date(event.start_time)
-      const origEnd = new Date(event.end_time)
-      const durationMs = origEnd.getTime() - origStart.getTime()
-      const newStart = localDateTimeFromMinutes(dateStr, origStart.getHours() * 60 + origStart.getMinutes())
-      const newEnd = new Date(newStart.getTime() + durationMs)
-      handleEventDrop(eventId, newStart.toISOString(), newEnd.toISOString())
+      setCurrentDate(dateStr);
+      setView("day");
+    } else if (action === "drop" && eventId) {
+      const event = events.find((e) => e.id === eventId);
+      if (!event) return;
+      const origStart = new Date(event.start_time);
+      const origEnd = new Date(event.end_time);
+      const durationMs = origEnd.getTime() - origStart.getTime();
+      const newStart = localDateTimeFromMinutes(
+        dateStr,
+        origStart.getHours() * 60 + origStart.getMinutes(),
+      );
+      const newEnd = new Date(newStart.getTime() + durationMs);
+      handleEventDrop(eventId, newStart.toISOString(), newEnd.toISOString());
     }
   }
 
   function openEventContextMenu(e, event) {
-    const viewportWidth = window.innerWidth
-    const viewportHeight = window.innerHeight
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
 
-    let x = e.clientX
-    let y = e.clientY
+    let x = e.clientX;
+    let y = e.clientY;
 
     if (x + CONTEXT_MENU_WIDTH > viewportWidth - VIEWPORT_PADDING) {
-      x = Math.max(VIEWPORT_PADDING, e.clientX - CONTEXT_MENU_WIDTH)
+      x = Math.max(VIEWPORT_PADDING, e.clientX - CONTEXT_MENU_WIDTH);
     }
     if (y + CONTEXT_MENU_HEIGHT > viewportHeight - VIEWPORT_PADDING) {
-      y = Math.max(VIEWPORT_PADDING, e.clientY - CONTEXT_MENU_HEIGHT)
+      y = Math.max(VIEWPORT_PADDING, e.clientY - CONTEXT_MENU_HEIGHT);
     }
 
-    setContextMenu({ event, x, y })
+    setContextMenu({ event, x, y });
   }
 
   async function placeDuplicatedEvent(startISO) {
-    if (!duplicateSource) return
+    if (!duplicateSource) return;
     try {
-      const originalStart = new Date(duplicateSource.start_time)
-      const originalEnd = new Date(duplicateSource.end_time)
-      const durationMs = originalEnd.getTime() - originalStart.getTime()
-      const newStart = new Date(startISO)
-      const newEnd = new Date(newStart.getTime() + durationMs)
+      const originalStart = new Date(duplicateSource.start_time);
+      const originalEnd = new Date(duplicateSource.end_time);
+      const durationMs = originalEnd.getTime() - originalStart.getTime();
+      const newStart = new Date(startISO);
+      const newEnd = new Date(newStart.getTime() + durationMs);
 
       await createEvent({
         title: duplicateSource.title,
-        description: duplicateSource.description ?? '',
-        location: duplicateSource.location ?? '',
+        description: duplicateSource.description ?? "",
+        location: duplicateSource.location ?? "",
         start_time: newStart.toISOString(),
         end_time: newEnd.toISOString(),
         all_day: !!duplicateSource.all_day,
         color: duplicateSource.color,
         color_id: duplicateSource.color_id,
-      })
-      addToast('Event duplicated', 'success')
+      });
+      addToast("Event duplicated", "success");
     } catch (err) {
-      addToast(err.message || 'Failed to duplicate event', 'error')
+      addToast(err.message || "Failed to duplicate event", "error");
     } finally {
-      setDuplicateSource(null)
+      setDuplicateSource(null);
     }
   }
 
   async function handleDeleteFromContext(event) {
-    setContextMenu(null)
-    await handleDeleteEvent(event.id)
+    setContextMenu(null);
+    await handleDeleteEvent(event.id);
   }
 
   function handleDuplicateFromContext(event) {
-    setContextMenu(null)
-    setDuplicateSource(event)
-    addToast('Duplicate ready — click a slot or day to place the copy', 'info')
+    setContextMenu(null);
+    setDuplicateSource(event);
+    addToast("Duplicate ready — click a slot or day to place the copy", "info");
   }
 
   async function handleEventDrop(eventId, newStart, newEnd) {
     try {
-      await updateEvent(eventId, { start_time: newStart, end_time: newEnd })
-      addToast('Event moved', 'success')
+      await updateEvent(eventId, { start_time: newStart, end_time: newEnd });
+      addToast("Event moved", "success");
     } catch (err) {
-      addToast(err.message, 'error')
+      addToast(err.message, "error");
     }
   }
 
   async function handleSaveEvent(fields) {
     try {
       if (selectedEvent) {
-        await updateEvent(selectedEvent.id, fields)
-        addToast('Event updated', 'success')
+        await updateEvent(selectedEvent.id, fields);
+        addToast("Event updated", "success");
       } else {
-        await createEvent(fields)
-        addToast('Event created', 'success')
+        await createEvent(fields);
+        addToast("Event created", "success");
       }
     } catch (err) {
-      addToast(err.message, 'error')
-      throw err
+      addToast(err.message, "error");
+      throw err;
     }
   }
 
   async function handleDeleteEvent(id) {
     try {
-      await deleteEvent(id)
-      addToast('Event deleted — Cmd+Z to undo', 'info')
+      await deleteEvent(id);
+      addToast("Event deleted — Cmd+Z to undo", "info");
     } catch (err) {
-      addToast(err.message, 'error')
-      throw err
+      addToast(err.message, "error");
+      throw err;
     }
   }
 
-  async function handleRecoveryStartSprint() {
-    try {
-      const data = await recovery.startSprintNow()
-      await reload()
-      addToast('Recovery sprint ready in Workspace', 'success')
-      onRouteRecoverySprintToWorkspace?.({
-        taskId: data?.task?.id ?? recovery.block?.task_id,
-        plannedMins: 10,
-      })
-    } catch (err) {
-      addToast(err.message || 'Failed to start sprint', 'error')
-      await recovery.reload()
-    }
-  }
-
-  async function handleRecoveryMove() {
-    try {
-      await recovery.moveToNextOpenSlot()
-      await reload()
-      addToast('Moved to the next open slot', 'success')
-    } catch (err) {
-      addToast(err.message || 'Failed to move block', 'error')
-      await recovery.reload()
-    }
-  }
-
-  async function handleEndOfDayRollover() {
-    try {
-      await recovery.rolloverToTomorrow()
-      await reload()
-      addToast('Moved unfinished work to tomorrow', 'success')
-    } catch (err) {
-      addToast(err.message || 'Failed to move work to tomorrow', 'error')
-      await recovery.reload()
-    }
-  }
-
-  async function handleRecoveryDismiss() {
-    try {
-      await recovery.dismiss()
-      addToast('Recovery card dismissed for now', 'info')
-    } catch (err) {
-      addToast(err.message || 'Failed to dismiss recovery card', 'error')
-    }
-  }
-
-  const displayLabel = view === 'month'
-    ? monthYear
-    : view === 'week'
-    ? `${formatDateLong(weekStart)} – ${formatDateLong(addDays(weekStart, 6))}`
-    : formatDateLong(currentDate)
-  const showEndOfDayRollover = isEndOfDayRolloverTime() && recovery.rollover
+  const displayLabel =
+    view === "month"
+      ? monthYear
+      : view === "week"
+        ? `${formatDateLong(weekStart)} – ${formatDateLong(addDays(weekStart, 6))}`
+        : formatDateLong(currentDate);
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-notion-bg">
@@ -305,7 +308,7 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
       <div className="flex-shrink-0 flex items-center gap-3 px-4 py-3 border-b border-notion-border">
         <div className="flex items-center gap-1">
           <button
-            onClick={() => navigate('prev')}
+            onClick={() => navigate("prev")}
             className="w-8 h-8 flex items-center justify-center rounded-lg text-notion-muted hover:bg-notion-hover hover:text-notion-text transition-colors"
           >
             ‹
@@ -317,7 +320,7 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
             Today
           </button>
           <button
-            onClick={() => navigate('next')}
+            onClick={() => navigate("next")}
             className="w-8 h-8 flex items-center justify-center rounded-lg text-notion-muted hover:bg-notion-hover hover:text-notion-text transition-colors"
           >
             ›
@@ -333,19 +336,29 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
             <div
               className="flex items-center gap-2 rounded-lg border px-3 py-1.5"
               style={{
-                borderColor: isBreak ? 'rgba(103,232,249,0.35)' : 'rgba(252,129,129,0.35)',
-                background: isBreak ? 'rgba(26,107,138,0.18)' : 'rgba(155,44,44,0.18)',
+                borderColor: isBreak
+                  ? "rgba(103,232,249,0.35)"
+                  : "rgba(252,129,129,0.35)",
+                background: isBreak
+                  ? "rgba(26,107,138,0.18)"
+                  : "rgba(155,44,44,0.18)",
               }}
-              title={isBreak ? 'Break timer running' : 'Focus timer running'}
+              title={isBreak ? "Break timer running" : "Focus timer running"}
             >
               <div
                 className="w-2 h-2 rounded-full"
-                style={{ background: isBreak ? '#67e8f9' : '#fc8181' }}
+                style={{ background: isBreak ? "#67e8f9" : "#fc8181" }}
               />
-              <span className="text-xs font-medium" style={{ color: 'var(--color-notion-text)' }}>
-                {isBreak ? 'Break' : 'Focus'}
+              <span
+                className="text-xs font-medium"
+                style={{ color: "var(--color-notion-text)" }}
+              >
+                {isBreak ? "Break" : "Focus"}
               </span>
-              <span className="text-xs font-semibold tabular-nums" style={{ color: 'var(--color-notion-text)' }}>
+              <span
+                className="text-xs font-semibold tabular-nums"
+                style={{ color: "var(--color-notion-text)" }}
+              >
                 {formatSeconds(timeLeft)}
               </span>
             </div>
@@ -353,14 +366,14 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
 
           {/* View toggle */}
           <div className="flex bg-notion-surface border border-notion-border rounded-lg overflow-hidden">
-            {['month', 'week', 'day'].map(v => (
+            {["month", "week", "day"].map((v) => (
               <button
                 key={v}
                 onClick={() => setView(v)}
                 className={`px-3 py-1.5 text-xs font-medium transition-colors ${
                   view === v
-                    ? 'bg-notion-hover text-notion-text'
-                    : 'text-notion-muted hover:text-notion-text'
+                    ? "bg-notion-hover text-notion-text"
+                    : "text-notion-muted hover:text-notion-text"
                 }`}
               >
                 {v.charAt(0).toUpperCase() + v.slice(1)}
@@ -375,40 +388,21 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
               disabled={syncing}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-notion-muted hover:text-notion-text hover:bg-notion-hover rounded-lg transition-colors disabled:opacity-50"
             >
-              <span className={syncing ? 'animate-spin inline-block' : ''}>↻</span>
-              {syncing ? 'Syncing…' : 'Sync'}
+              <span className={syncing ? "animate-spin inline-block" : ""}>
+                ↻
+              </span>
+              {syncing ? "Syncing…" : "Sync"}
             </button>
           ) : (
-            <button onClick={connect} className="text-xs text-indigo-400 hover:underline">
+            <button
+              onClick={connect}
+              className="text-xs text-indigo-400 hover:underline"
+            >
               Connect Google
             </button>
           )}
         </div>
       </div>
-
-      {showEndOfDayRollover && (
-        <div className="flex-shrink-0 px-4 pt-3">
-          <EndOfDayRolloverCard
-            rollover={recovery.rollover}
-            actionLoading={recovery.actionLoading}
-            onMoveToTomorrow={() => { void handleEndOfDayRollover() }}
-          />
-        </div>
-      )}
-
-      {!showEndOfDayRollover && recovery.block && (
-        <div className="flex-shrink-0 px-4 pt-3">
-          <MissedBlockRecoveryCard
-            block={recovery.block}
-            recommendation={recovery.recommendation}
-            aiLoading={recovery.aiLoading}
-            actionLoading={recovery.actionLoading}
-            onDismiss={() => { void handleRecoveryDismiss() }}
-            onStartSprintNow={() => { void handleRecoveryStartSprint() }}
-            onMoveToNextOpenSlot={() => { void handleRecoveryMove() }}
-          />
-        </div>
-      )}
 
       {/* Calendar body */}
       {loading ? (
@@ -417,7 +411,7 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
         </div>
       ) : (
         <div className="flex-1 min-h-0">
-          {view === 'month' ? (
+          {view === "month" ? (
             <MonthView
               year={year}
               month={month - 1}
@@ -426,7 +420,7 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
               onEventClick={openEditModal}
               onEventContextMenu={openEventContextMenu}
             />
-          ) : view === 'week' ? (
+          ) : view === "week" ? (
             <WeekView
               weekStart={weekStart}
               events={events}
@@ -452,7 +446,7 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
         <div
           className="fixed z-50 min-w-40 rounded-lg border border-notion-border bg-notion-surface shadow-2xl overflow-hidden"
           style={{ top: contextMenu.y, left: contextMenu.x }}
-          onClick={e => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
         >
           <button
             className="w-full px-3 py-2 text-left text-sm text-notion-text hover:bg-notion-hover transition-colors"
@@ -477,10 +471,10 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
           slot={quickCreate.slot}
           onSave={async (fields) => {
             try {
-              await createEvent(fields)
-              addToast('Event created', 'success')
+              await createEvent(fields);
+              addToast("Event created", "success");
             } catch (err) {
-              addToast(err.message, 'error')
+              addToast(err.message, "error");
             }
           }}
           onMoreOptions={openFullModalFromQuick}
@@ -491,14 +485,18 @@ export default function CalendarPage({ onRouteRecoverySprintToWorkspace }) {
       {/* Full event create/edit modal */}
       <CalendarEventModal
         isOpen={modalOpen}
-        onClose={() => { setModalOpen(false); setSelectedEvent(null); setDefaultSlot(null) }}
+        onClose={() => {
+          setModalOpen(false);
+          setSelectedEvent(null);
+          setDefaultSlot(null);
+        }}
         onSave={handleSaveEvent}
         onDelete={selectedEvent ? handleDeleteEvent : undefined}
         event={selectedEvent}
         defaultStart={defaultSlot?.start_time}
         defaultEnd={defaultSlot?.end_time}
-        defaultTitle={defaultSlot?.title ?? ''}
+        defaultTitle={defaultSlot?.title ?? ""}
       />
     </div>
-  )
+  );
 }

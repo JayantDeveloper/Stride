@@ -1,5 +1,5 @@
 {
-  "name": "focus-exec-backend",
+  "name": "stride-backend",
   "version": "1.0.0",
   "main": "server.mjs",
   "scripts": {

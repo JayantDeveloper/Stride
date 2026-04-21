@@ -1,33 +1,40 @@
-import { CheckInModal } from '../components/execute/CheckInModal'
-import { WorkspaceFocusPanel } from '../components/workspace/WorkspaceFocusPanel'
-import { WorkspaceOrganizePanel } from '../components/workspace/WorkspaceOrganizePanel'
-import { WorkspaceTaskList } from '../components/workspace/WorkspaceTaskList'
-import { WorkspaceToolbar } from '../components/workspace/WorkspaceToolbar'
-import { TaskModal } from '../components/tasks/TaskModal'
-import { EndOfDayRolloverCard } from '../components/shared/EndOfDayRolloverCard'
-import { MissedBlockRecoveryCard } from '../components/shared/MissedBlockRecoveryCard'
-import { useTasks } from '../hooks/useTasks'
-import { useWorkspaceOrganizePanel } from '../hooks/workspace/useWorkspaceOrganizePanel'
-import { useWorkspacePaneResize } from '../hooks/workspace/useWorkspacePaneResize'
-import { useWorkspaceRecoveryActions } from '../hooks/workspace/useWorkspaceRecoveryActions'
-import { useWorkspaceSprintController } from '../hooks/workspace/useWorkspaceSprintController'
-import { useWorkspaceTaskBoard } from '../hooks/workspace/useWorkspaceTaskBoard'
-import { useOrganize } from '../hooks/useAIOrganize'
-import { useMissedBlockRecovery } from '../hooks/useMissedBlockRecovery'
-import { useTaskActivationAI } from '../hooks/useTaskActivationAI'
-import { useCalendarEvents } from '../hooks/useCalendarEvents'
-import { useToast } from '../context/ToastContext'
-import { isEndOfDayRolloverTime } from '../utils/dateHelpers'
+import { CheckInModal } from "../components/execute/CheckInModal";
+import { WorkspaceFocusPanel } from "../components/workspace/WorkspaceFocusPanel";
+import { WorkspaceOrganizePanel } from "../components/workspace/WorkspaceOrganizePanel";
+import { WorkspaceTaskList } from "../components/workspace/WorkspaceTaskList";
+import { WorkspaceToolbar } from "../components/workspace/WorkspaceToolbar";
+import { TaskModal } from "../components/tasks/TaskModal";
+import { useTasks } from "../hooks/useTasks";
+import { useWorkspaceOrganizePanel } from "../hooks/workspace/useWorkspaceOrganizePanel";
+import { useWorkspacePaneResize } from "../hooks/workspace/useWorkspacePaneResize";
+import { useWorkspaceSprintController } from "../hooks/workspace/useWorkspaceSprintController";
+import { useWorkspaceTaskBoard } from "../hooks/workspace/useWorkspaceTaskBoard";
+import { useOrganize } from "../hooks/useAIOrganize";
+import { useTaskActivationAI } from "../hooks/useTaskActivationAI";
+import { useCalendarEvents } from "../hooks/useCalendarEvents";
+import { useToast } from "../context/ToastContext";
 
-export default function WorkspacePage({ externalSprintRequest, onExternalSprintHandled }) {
-  const { tasks, loading, createTask, updateTask, deleteTask, undoDelete, reorderTasks, reload } = useTasks()
-  const { reload: reloadEvents } = useCalendarEvents({ skip: true })
-  const recovery = useMissedBlockRecovery()
-  const { loadingAction: activationLoadingAction, getBreakdown } = useTaskActivationAI()
+export default function WorkspacePage({
+  externalSprintRequest,
+  onExternalSprintHandled,
+}) {
+  const {
+    tasks,
+    loading,
+    createTask,
+    updateTask,
+    deleteTask,
+    undoDelete,
+    reorderTasks,
+    reload,
+  } = useTasks();
+  const { reload: reloadEvents } = useCalendarEvents({ skip: true });
+  const { loadingAction: activationLoadingAction, getBreakdown } =
+    useTaskActivationAI();
   const { organize, loading: organizing } = useOrganize({
-    onComplete: () => reloadEvents()
-  })
-  const { addToast } = useToast()
+    onComplete: () => reloadEvents(),
+  });
+  const { addToast } = useToast();
 
   const taskBoard = useWorkspaceTaskBoard({
     tasks,
@@ -39,7 +46,7 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
     reorderTasks,
     reloadEvents,
     addToast,
-  })
+  });
 
   const sprint = useWorkspaceSprintController({
     tasks,
@@ -49,28 +56,26 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
     addToast,
     externalSprintRequest,
     onExternalSprintHandled,
-  })
+  });
 
   const organizePanel = useWorkspaceOrganizePanel({
     organize,
     organizing,
     addToast,
-  })
+  });
 
-  const recoveryActions = useWorkspaceRecoveryActions({
-    recovery,
-    reloadTasks: reload,
-    reloadEvents,
-    addToast,
-    requestTimerStart: sprint.requestTimerStart,
-  })
-  const showEndOfDayRollover = isEndOfDayRolloverTime() && recoveryActions.rollover
-
-  const { containerRef, rightPct, handleDividerMouseDown } = useWorkspacePaneResize()
+  const { containerRef, rightPct, handleDividerMouseDown } =
+    useWorkspacePaneResize();
 
   return (
-    <div ref={containerRef} className="flex flex-1 min-h-0 h-full overflow-hidden">
-      <div className="flex flex-col min-h-0 overflow-hidden" style={{ flex: '1 1 0', minWidth: 0 }}>
+    <div
+      ref={containerRef}
+      className="flex flex-1 min-h-0 h-full overflow-hidden"
+    >
+      <div
+        className="flex flex-col min-h-0 overflow-hidden"
+        style={{ flex: "1 1 0", minWidth: 0 }}
+      >
         <WorkspaceToolbar
           filterStatus={taskBoard.filterStatus}
           sortBy={taskBoard.sortBy}
@@ -79,7 +84,9 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
           onFilterStatusChange={taskBoard.setFilterStatus}
           onSortByChange={taskBoard.setSortBy}
           onToggleOrganize={organizePanel.toggleOrganize}
-          onAddTask={() => { void taskBoard.handleAddTask() }}
+          onAddTask={() => {
+            void taskBoard.handleAddTask();
+          }}
         />
 
         {organizePanel.showOrganize && (
@@ -90,32 +97,10 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
             onModeChange={organizePanel.setOrganizeMode}
             onDateChange={organizePanel.setOrganizeDate}
             onCancel={organizePanel.closeOrganize}
-            onSubmit={() => { void organizePanel.handleOrganize() }}
+            onSubmit={() => {
+              void organizePanel.handleOrganize();
+            }}
           />
-        )}
-
-        {showEndOfDayRollover && (
-          <div className="flex-shrink-0 px-4 pt-3">
-            <EndOfDayRolloverCard
-              rollover={recoveryActions.rollover}
-              actionLoading={recoveryActions.actionLoading}
-              onMoveToTomorrow={() => { void recoveryActions.handleEndOfDayRollover() }}
-            />
-          </div>
-        )}
-
-        {!showEndOfDayRollover && recoveryActions.block && (
-          <div className="flex-shrink-0 px-4 pt-3">
-            <MissedBlockRecoveryCard
-              block={recoveryActions.block}
-              recommendation={recoveryActions.recommendation}
-              aiLoading={recoveryActions.aiLoading}
-              actionLoading={recoveryActions.actionLoading}
-              onDismiss={() => { void recoveryActions.handleRecoveryDismiss() }}
-              onStartSprintNow={() => { void recoveryActions.handleRecoveryStartSprint() }}
-              onMoveToNextOpenSlot={() => { void recoveryActions.handleRecoveryMove() }}
-            />
-          </div>
         )}
 
         <WorkspaceTaskList
@@ -126,7 +111,9 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
           draggedId={taskBoard.draggedId}
           activeTaskId={sprint.activeTask?.id ?? null}
           activeRowHighlight={sprint.activeRowHighlight}
-          onAddTask={() => { void taskBoard.handleAddTask() }}
+          onAddTask={() => {
+            void taskBoard.handleAddTask();
+          }}
           onEditTask={taskBoard.openTaskModal}
           onDeleteTask={taskBoard.handleDeleteTask}
           onFieldSave={taskBoard.handleFieldSave}
@@ -141,9 +128,17 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
       <div
         onMouseDown={handleDividerMouseDown}
         className="flex-shrink-0 flex items-center justify-center group"
-        style={{ width: 6, cursor: 'col-resize', background: 'var(--color-notion-border)', flexShrink: 0 }}
+        style={{
+          width: 6,
+          cursor: "col-resize",
+          background: "var(--color-notion-border)",
+          flexShrink: 0,
+        }}
       >
-        <div className="w-0.5 h-8 rounded-full opacity-0 group-hover:opacity-60 transition-opacity" style={{ background: '#818CF8' }} />
+        <div
+          className="w-0.5 h-8 rounded-full opacity-0 group-hover:opacity-60 transition-opacity"
+          style={{ background: "#818CF8" }}
+        />
       </div>
 
       <WorkspaceFocusPanel
@@ -166,7 +161,11 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
       />
 
       <TaskModal
-        key={taskBoard.taskModalOpen ? `task-${taskBoard.editingTask?.id ?? 'new'}` : 'closed'}
+        key={
+          taskBoard.taskModalOpen
+            ? `task-${taskBoard.editingTask?.id ?? "new"}`
+            : "closed"
+        }
         isOpen={taskBoard.taskModalOpen}
         onClose={taskBoard.closeTaskModal}
         onSave={taskBoard.handleModalSave}
@@ -182,5 +181,5 @@ export default function WorkspacePage({ externalSprintRequest, onExternalSprintH
         onOutcomeSubmitted={sprint.handleCheckinOutcomeSubmitted}
       />
     </div>
-  )
+  );
 }

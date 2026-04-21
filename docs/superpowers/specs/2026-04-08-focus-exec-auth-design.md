@@ -5,9 +5,10 @@ Status: Approved for planning
 
 ## Summary
 
-`focus-exec` will move from a single-user app with global data and a custom Google Calendar OAuth flow to a multi-user app with database-backed sessions, account creation, and tenant-scoped data.
+`stride` will move from a single-user app with global data and a custom Google Calendar OAuth flow to a multi-user app with database-backed sessions, account creation, and tenant-scoped data.
 
 The system will use Better Auth as the single auth system for:
+
 - email/password signup and login
 - Google sign-in
 - database-backed session management
@@ -47,6 +48,7 @@ This design changes the authority model completely: the authenticated app user b
 ### 1. Better Auth is the single auth system
 
 Better Auth will own:
+
 - signup
 - login
 - logout
@@ -61,6 +63,7 @@ The existing custom auth routes in `backend/routes/auth.js` will be removed afte
 Sessions will be stored in Turso through Better Auth instead of using stateless JWT-only auth.
 
 Reasons:
+
 - immediate revocation on logout
 - simpler debugging and admin inspection
 - fewer failure modes than custom JWT handling
@@ -71,6 +74,7 @@ Reasons:
 The current backend is CommonJS, while Better Auth's Express integration targets ESM. The backend will be migrated to ESM as part of this project.
 
 This includes:
+
 - `"type": "module"` in `backend/package.json`
 - converting `require` and `module.exports` to `import` and `export`
 - updating local module import paths and startup code
@@ -78,18 +82,21 @@ This includes:
 ### 4. Google is both a login provider and a Calendar provider
 
 Google will serve two related roles:
+
 - social sign-in for product auth
 - linked account used for Google Calendar API access
 
-For v1, one `focus-exec` account maps to one Google identity set.
+For v1, one `stride` account maps to one Google identity set.
 
 Design constraints:
+
 - `email/password + Google sign-in` is supported
 - account linking is enabled
 - trusted providers are `google` and `email-password`
 - `allowDifferentEmails = false` for v1
 
 Implication:
+
 - if a user wants Google sign-in or Calendar connection, the linked Google identity must match the account identity set used for that app account
 - users can still use the app without connecting Google Calendar
 
@@ -108,6 +115,7 @@ This keeps signup lighter while still supporting durable Calendar linkage. Bette
 Better Auth will be mounted at `/api/auth/*`.
 
 Express integration requirements:
+
 - mount the Better Auth handler before `express.json()`
 - keep other API routes under the same backend
 
@@ -116,11 +124,13 @@ Express integration requirements:
 All non-auth app routes except health checks require an authenticated session.
 
 Auth middleware behavior:
+
 - resolve the Better Auth session from the request
 - populate the request user context
 - reject unauthenticated access
 
 Critical rule:
+
 - the client never sends `user_id`
 - the backend derives the effective user from the session only
 
@@ -129,23 +139,27 @@ Critical rule:
 The frontend will boot with product session state, not Google OAuth status.
 
 The UI will distinguish:
+
 - signed in to the app
 - not signed in
 - signed in but Calendar not connected
 - signed in and Calendar connected
 
 The current `useGoogleAuth` flow will be replaced by:
+
 - a product auth client/session layer
 - a separate Calendar connection status layer
 
 ### Calendar connection behavior
 
 When a signed-in user clicks Connect Calendar:
+
 - if they already have Google linked with required Calendar scopes, no reconnect is needed
 - if they have Google linked without Calendar scopes, the app triggers re-consent for additional scopes
 - if they do not yet have Google linked, the flow links Google and requests Calendar scopes
 
 The app only asks the user to reconnect when:
+
 - Google revoked access
 - scopes changed
 - no refresh token is available
@@ -155,12 +169,14 @@ The app only asks the user to reconnect when:
 ### Better Auth tables
 
 Better Auth-managed tables will live in the same Turso database:
+
 - `user`
 - `session`
 - `account`
 - `verification`
 
 Required config choices:
+
 - database-backed sessions
 - `account.encryptOAuthTokens = true`
 - `account.updateAccountOnSignIn = true`
@@ -170,6 +186,7 @@ Required config choices:
 ### Tenant-scoped app tables
 
 Add `user_id TEXT NOT NULL REFERENCES user(id)` to:
+
 - `tasks`
 - `calendar_events`
 - `focus_sessions`
@@ -177,18 +194,22 @@ Add `user_id TEXT NOT NULL REFERENCES user(id)` to:
 - `daily_logs`
 
 Replace:
+
 - `app_settings`
 
 With:
+
 - `user_settings`
 
 `user_settings` shape:
+
 - `user_id`
 - `key`
 - `value`
 - primary key on `(user_id, key)`
 
 Remove after migration:
+
 - `google_credentials`
 
 Google OAuth tokens and linked provider data will live in Better Auth `account` rows instead of a singleton table.
@@ -196,11 +217,13 @@ Google OAuth tokens and linked provider data will live in Better Auth `account` 
 ### Constraints and indexes
 
 Required changes:
+
 - add an index on `user_id` for every tenant-scoped table
 - make `daily_logs` unique on `(user_id, date)`
 - make calendar event uniqueness user-scoped instead of global
 
 Required uniqueness for `calendar_events`:
+
 - `(user_id, google_event_id)`
 
 This prevents collisions between different users syncing the same provider event ids into the same database.
@@ -224,6 +247,7 @@ SELECT * FROM tasks WHERE id = ? AND user_id = ?
 ```
 
 This rule applies to:
+
 - `SELECT`
 - `INSERT`
 - `UPDATE`
@@ -280,6 +304,7 @@ This is safer than creating a fake unassigned tenant because it avoids long-live
 The main risk is a missing `user_id` predicate leading to insecure direct object reference behavior.
 
 Required mitigation:
+
 - every tenant-scoped route must derive user context from the authenticated session
 - every tenant-scoped query must include `user_id`
 - tests must verify cross-user access is denied
@@ -291,6 +316,7 @@ Google OAuth tokens must not be stored in plaintext custom tables. Better Auth a
 ### Session and cookie security
 
 Use secure, httpOnly cookies in production and configure trusted origins correctly for:
+
 - local development
 - deployed frontend
 - deployed backend
@@ -300,6 +326,7 @@ Use secure, httpOnly cookies in production and configure trusted origins correct
 Google provider configuration must request offline access and consent to maximize refresh-token reliability.
 
 The UI must surface reconnect states when:
+
 - access is revoked
 - refresh fails
 - required Calendar scopes are missing
@@ -307,6 +334,7 @@ The UI must surface reconnect states when:
 ## Error Handling
 
 Expected user-visible states:
+
 - unauthenticated: redirect to login or show auth gate
 - authenticated without Calendar: show connect CTA
 - Calendar token revoked: show reconnect CTA
@@ -314,6 +342,7 @@ Expected user-visible states:
 - forbidden cross-user resource access: return not found or forbidden, never leak ownership details
 
 Expected backend behaviors:
+
 - if a provider access token expires, refresh and retry where possible
 - if refresh fails, mark the account as needing reconnect
 - if session lookup fails, reject before touching tenant data
@@ -321,6 +350,7 @@ Expected backend behaviors:
 ## Frontend Changes
 
 Required UI changes:
+
 - auth pages for signup and login
 - Google sign-in option on auth screens
 - session bootstrap on app load
@@ -328,6 +358,7 @@ Required UI changes:
 - settings UI updated to reflect product account and Calendar connection separately
 
 State changes:
+
 - replace `useGoogleAuth` with auth session hooks plus calendar connection hooks
 - stop relying on URL query params from the legacy custom OAuth flow
 
@@ -336,6 +367,7 @@ State changes:
 ### Automated tests
 
 Required test coverage:
+
 - signup, login, logout, duplicate email, wrong password
 - session-required route protection
 - tenant isolation for read, update, delete, and list endpoints
@@ -346,6 +378,7 @@ Required test coverage:
 ### Manual tests
 
 Required manual verification:
+
 - create account with email/password
 - sign in with email/password
 - sign in with Google
@@ -372,6 +405,7 @@ Do not start by rewriting every data route first. The auth and session foundatio
 ## Deferred Work
 
 These items are explicitly out of scope for the first rollout:
+
 - teams or shared workspaces
 - support for linking a different Google identity than the app account identity
 - admin consoles

@@ -39,7 +39,7 @@ async function dbBatch(statements) {
     const results = [];
     for (const statement of statements) {
       const sql = typeof statement === "string" ? statement : statement.sql;
-      const args = typeof statement === "string" ? [] : statement.args ?? [];
+      const args = typeof statement === "string" ? [] : (statement.args ?? []);
       results.push(await client.query(prepareQuery(sql), args));
     }
     await client.query("COMMIT");
@@ -75,7 +75,7 @@ async function initializeSchema() {
       breakdown_json TEXT DEFAULT '',
       current_subtask_index INTEGER NOT NULL DEFAULT 0,
       current_sprint_goal TEXT DEFAULT '',
-      allow_split INTEGER NOT NULL DEFAULT 0,
+      allow_split INTEGER NOT NULL DEFAULT 1,
       position INTEGER NOT NULL DEFAULT 0,
       calendar_event_id TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -98,7 +98,6 @@ async function initializeSchema() {
       event_type TEXT NOT NULL DEFAULT 'external',
       task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
       block_state TEXT NOT NULL DEFAULT 'scheduled',
-      recovery_dismissed_until TEXT,
       color TEXT DEFAULT 'blue',
       color_id TEXT DEFAULT '',
       synced_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -377,21 +376,30 @@ async function initializeAuthSchema() {
 
 async function claimLegacyDataForUser(userId) {
   const owner = await dbGet(
-    "SELECT value FROM app_settings WHERE key = 'legacy_owner_user_id'"
+    "SELECT value FROM app_settings WHERE key = 'legacy_owner_user_id'",
   );
 
   if (owner?.value && owner.value !== userId) {
     return;
   }
 
-  const [tasksRow, eventsRow, sessionsRow, checkinsRow, logsRow, pomodoroRow] = await Promise.all([
-    dbGet("SELECT COUNT(*)::int AS count FROM tasks WHERE user_id IS NULL"),
-    dbGet("SELECT COUNT(*)::int AS count FROM calendar_events WHERE user_id IS NULL"),
-    dbGet("SELECT COUNT(*)::int AS count FROM focus_sessions WHERE user_id IS NULL"),
-    dbGet("SELECT COUNT(*)::int AS count FROM accountability_checkins WHERE user_id IS NULL"),
-    dbGet("SELECT COUNT(*)::int AS count FROM daily_logs WHERE user_id IS NULL"),
-    dbGet("SELECT value FROM app_settings WHERE key = 'pomodoro_state'"),
-  ]);
+  const [tasksRow, eventsRow, sessionsRow, checkinsRow, logsRow, pomodoroRow] =
+    await Promise.all([
+      dbGet("SELECT COUNT(*)::int AS count FROM tasks WHERE user_id IS NULL"),
+      dbGet(
+        "SELECT COUNT(*)::int AS count FROM calendar_events WHERE user_id IS NULL",
+      ),
+      dbGet(
+        "SELECT COUNT(*)::int AS count FROM focus_sessions WHERE user_id IS NULL",
+      ),
+      dbGet(
+        "SELECT COUNT(*)::int AS count FROM accountability_checkins WHERE user_id IS NULL",
+      ),
+      dbGet(
+        "SELECT COUNT(*)::int AS count FROM daily_logs WHERE user_id IS NULL",
+      ),
+      dbGet("SELECT value FROM app_settings WHERE key = 'pomodoro_state'"),
+    ]);
 
   const hasLegacyRows =
     Number(tasksRow?.count ?? 0) > 0 ||
@@ -404,24 +412,39 @@ async function claimLegacyDataForUser(userId) {
   if (!hasLegacyRows) return;
 
   await dbRun("UPDATE tasks SET user_id = ? WHERE user_id IS NULL", [userId]);
-  await dbRun("UPDATE calendar_events SET user_id = ? WHERE user_id IS NULL", [userId]);
-  await dbRun("UPDATE focus_sessions SET user_id = ? WHERE user_id IS NULL", [userId]);
-  await dbRun("UPDATE accountability_checkins SET user_id = ? WHERE user_id IS NULL", [userId]);
-  await dbRun("UPDATE daily_logs SET user_id = ? WHERE user_id IS NULL", [userId]);
+  await dbRun("UPDATE calendar_events SET user_id = ? WHERE user_id IS NULL", [
+    userId,
+  ]);
+  await dbRun("UPDATE focus_sessions SET user_id = ? WHERE user_id IS NULL", [
+    userId,
+  ]);
+  await dbRun(
+    "UPDATE accountability_checkins SET user_id = ? WHERE user_id IS NULL",
+    [userId],
+  );
+  await dbRun("UPDATE daily_logs SET user_id = ? WHERE user_id IS NULL", [
+    userId,
+  ]);
 
   if (pomodoroRow?.value) {
-    await dbRun(`
+    await dbRun(
+      `
       INSERT INTO user_settings (user_id, key, value)
       VALUES (?, ?, ?)
       ON CONFLICT (user_id, key) DO NOTHING
-    `, [userId, "pomodoro_state", pomodoroRow.value]);
+    `,
+      [userId, "pomodoro_state", pomodoroRow.value],
+    );
   }
 
-  await dbRun(`
+  await dbRun(
+    `
     INSERT INTO app_settings (key, value)
     VALUES (?, ?)
     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-  `, ["legacy_owner_user_id", userId]);
+  `,
+    ["legacy_owner_user_id", userId],
+  );
 }
 
 module.exports = {
