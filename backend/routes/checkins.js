@@ -12,7 +12,7 @@ router.get("/", async (req, res) => {
   const params = [req.user.id];
 
   if (req.query.date) {
-    query += " AND date(prompted_at) = date(?)";
+    query += " AND prompted_at::date = ?::date";
     params.push(req.query.date);
   }
 

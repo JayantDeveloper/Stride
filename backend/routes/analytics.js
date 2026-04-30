@@ -16,7 +16,7 @@ router.get("/summary", async (req, res) => {
       SELECT COUNT(*) as count FROM tasks
       WHERE user_id = ?
         AND status = 'Done'
-        AND date(updated_at) BETWEEN date(?) AND date(?)
+        AND updated_at::date BETWEEN ?::date AND ?::date
     `, [userId, start, end]),
     dbGet("SELECT COUNT(*) as count FROM tasks WHERE user_id = ?", [userId]),
     dbGet(`
@@ -28,36 +28,36 @@ router.get("/summary", async (req, res) => {
       FROM focus_sessions
       WHERE user_id = ?
         AND session_type = 'focus'
-        AND date(started_at) BETWEEN date(?) AND date(?)
+        AND started_at::date BETWEEN ?::date AND ?::date
         AND ended_at IS NOT NULL
     `, [userId, start, end]),
     dbAll(`
       SELECT outcome, COUNT(*) as count
       FROM accountability_checkins
       WHERE user_id = ?
-        AND date(prompted_at) BETWEEN date(?) AND date(?)
+        AND prompted_at::date BETWEEN ?::date AND ?::date
         AND outcome IS NOT NULL
       GROUP BY outcome
     `, [userId, start, end]),
     dbAll(`
-      SELECT date(updated_at) as date, COUNT(*) as completed
+      SELECT updated_at::date as date, COUNT(*) as completed
       FROM tasks
       WHERE user_id = ?
         AND status = 'Done'
-        AND date(updated_at) BETWEEN date(?) AND date(?)
-      GROUP BY date(updated_at)
+        AND updated_at::date BETWEEN ?::date AND ?::date
+      GROUP BY updated_at::date
       ORDER BY date ASC
     `, [userId, start, end]),
     dbAll(`
-      SELECT date(started_at) as date,
+      SELECT started_at::date as date,
              SUM(COALESCE(actual_mins, planned_mins)) as focus_mins,
              COUNT(*) as sessions
       FROM focus_sessions
       WHERE user_id = ?
         AND session_type = 'focus'
         AND ended_at IS NOT NULL
-        AND date(started_at) BETWEEN date(?) AND date(?)
-      GROUP BY date(started_at)
+        AND started_at::date BETWEEN ?::date AND ?::date
+      GROUP BY started_at::date
       ORDER BY date ASC
     `, [userId, start, end]),
   ]);
@@ -91,32 +91,28 @@ router.get("/trends", async (req, res) => {
 
   const rows = await dbAll(`
     SELECT
-      d.date,
+      d.date::text,
       COALESCE(t.completed, 0) as tasks_completed,
       COALESCE(f.focus_mins, 0) as focus_mins,
       COALESCE(f.sessions, 0) as sessions
     FROM (
-      WITH RECURSIVE dates(date) AS (
-        SELECT date(?)
-        UNION ALL
-        SELECT date(date, '+1 day') FROM dates WHERE date < date(?)
-      ) SELECT date FROM dates
+      SELECT generate_series(?::date, ?::date, INTERVAL '1 day')::date AS date
     ) d
     LEFT JOIN (
-      SELECT date(updated_at) as date, COUNT(*) as completed
+      SELECT updated_at::date as date, COUNT(*) as completed
       FROM tasks
       WHERE user_id = ? AND status = 'Done'
-      GROUP BY date(updated_at)
+      GROUP BY updated_at::date
     ) t ON d.date = t.date
     LEFT JOIN (
-      SELECT date(started_at) as date,
+      SELECT started_at::date as date,
              SUM(COALESCE(actual_mins, planned_mins)) as focus_mins,
              COUNT(*) as sessions
       FROM focus_sessions
       WHERE user_id = ?
         AND session_type = 'focus'
         AND ended_at IS NOT NULL
-      GROUP BY date(started_at)
+      GROUP BY started_at::date
     ) f ON d.date = f.date
     ORDER BY d.date ASC
   `, [start, end, userId, userId]);

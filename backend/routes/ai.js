@@ -158,17 +158,17 @@ router.post("/evening-review", async (req, res) => {
       FROM focus_sessions fs
       LEFT JOIN tasks t ON fs.task_id = t.id
       WHERE fs.user_id = ?
-        AND date(fs.started_at) = date(?)
+        AND fs.started_at::date = ?::date
         AND fs.ended_at IS NOT NULL
     `,
       [userId, date],
     ),
     dbAll(
-      "SELECT * FROM accountability_checkins WHERE user_id = ? AND date(prompted_at) = date(?)",
+      "SELECT * FROM accountability_checkins WHERE user_id = ? AND prompted_at::date = ?::date",
       [userId, date],
     ),
     dbGet(
-      "SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = 'Done' AND date(updated_at) = date(?)",
+      "SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = 'Done' AND updated_at::date = ?::date",
       [userId, date],
     ),
   ]);
