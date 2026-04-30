@@ -2,6 +2,7 @@ const express = require("express");
 const crypto = require("crypto");
 const { dbGet, dbAll, dbRun } = require("../db/database");
 const gcal = require("../services/googleCalendar");
+const { safeParseJSON } = require("../utils/json");
 
 const router = express.Router();
 
@@ -258,14 +259,6 @@ router.delete("/:id", async (req, res) => {
   ]);
   res.json({ ok: true });
 });
-
-function safeParseJSON(str, fallback) {
-  try {
-    return JSON.parse(str);
-  } catch {
-    return fallback;
-  }
-}
 
 async function clearFutureTaskBlocksForCompletedTask(userId, taskId) {
   const now = new Date();

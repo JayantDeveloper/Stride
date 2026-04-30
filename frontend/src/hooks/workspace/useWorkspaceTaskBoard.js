@@ -41,7 +41,7 @@ export function useWorkspaceTaskBoard({
   async function handleAddTask() {
     setFilterStatus('active')
     setSortBy('position')
-    await createTask({ allow_split: 0 })
+    await createTask({ allow_split: 1 })
   }
 
   function openTaskModal(task) {

@@ -32,6 +32,7 @@ export function useWorkspaceOrganizePanel({ organize, organizing, addToast }) {
       })
       const scheduledCount = data.scheduled?.length ?? 0
       addToast(`Scheduled ${scheduledCount} block${scheduledCount !== 1 ? 's' : ''} on calendar`, 'success')
+      closeOrganize() // Hide the panel after successful push
       return data
     } catch (error) {
       addToast(error.message || 'Push to Calendar failed', 'error')

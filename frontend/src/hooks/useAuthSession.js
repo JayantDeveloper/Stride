@@ -11,7 +11,7 @@ export function useAuthSession() {
   const [actionLoading, setActionLoading] = useState('')
   const [error, setError] = useState('')
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async ({ silent = false } = {}) => {
     setLoading(true)
     try {
       const data = await apiRequest('/api/auth/get-session')
@@ -20,7 +20,8 @@ export function useAuthSession() {
       return data
     } catch (err) {
       setSession(null)
-      setError(err.message)
+      // Don't surface network errors from the passive session check — not logged in is the expected state
+      if (!silent) setError(err.message)
       return null
     } finally {
       setLoading(false)
@@ -28,7 +29,7 @@ export function useAuthSession() {
   }, [])
 
   useEffect(() => {
-    void refresh()
+    void refresh({ silent: true })
   }, [refresh])
 
   const signUpWithEmail = useCallback(async ({ name, email, password }) => {

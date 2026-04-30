@@ -179,6 +179,7 @@ export default function WorkspacePage({
         taskTitle={sprint.checkinState?.taskTitle}
         sessionId={sprint.checkinState?.sessionId}
         onOutcomeSubmitted={sprint.handleCheckinOutcomeSubmitted}
+        onReschedule={(taskId) => taskBoard.openTaskModal(tasks.find(t => t.id === taskId) ?? null)}
       />
     </div>
   );

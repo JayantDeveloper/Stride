@@ -4,13 +4,17 @@ import { Toast } from './components/shared/Toast'
 import { ToastProvider } from './context/ToastContext'
 import WorkspacePage from './pages/WorkspacePage'
 import CalendarPage from './pages/CalendarPage'
+import PlanningPage from './pages/PlanningPage'
+import AnalyticsPage from './pages/AnalyticsPage'
 import SettingsPage from './pages/SettingsPage'
 import AuthPage from './pages/AuthPage'
 import { useAuthSession } from './hooks/useAuthSession'
 
 const TABS = [
   { id: 'workspace', label: 'Tasks' },
+  { id: 'plan',      label: 'Plan' },
   { id: 'calendar',  label: 'Calendar' },
+  { id: 'analytics', label: 'Analytics' },
 ]
 
 export default function App() {
@@ -62,46 +66,36 @@ export default function App() {
           style={{ background: 'var(--color-notion-bg)', color: 'var(--color-notion-text)' }}
         >
           <header
-            className="flex-shrink-0 flex items-center px-4 h-11"
+            className="flex-shrink-0 flex items-center gap-6 px-4 h-10"
             style={{ borderBottom: '1px solid var(--color-notion-border)' }}
           >
-            <div className="flex items-center gap-2 w-36 flex-shrink-0">
-              <span className="text-sm font-semibold text-notion-text tracking-tight">Stride</span>
-            </div>
+            <span className="text-xs font-semibold tracking-widest text-indigo-400 uppercase select-none">Stride</span>
 
-            <div className="flex-1 flex items-center justify-center">
-              <div
-                className="flex rounded-lg overflow-hidden"
-                style={{ background: 'var(--color-notion-surface)', border: '1px solid var(--color-notion-border)' }}
-              >
-                {TABS.map(t => (
-                  <button
-                    key={t.id}
-                    onClick={() => { setTab(t.id); setShowSettings(false) }}
-                    className={`px-5 py-1.5 text-sm font-medium transition-colors ${
-                      tab === t.id && !showSettings
-                        ? 'text-notion-text'
-                        : 'text-notion-muted hover:text-notion-text'
-                    }`}
-                    style={tab === t.id && !showSettings ? { background: 'var(--color-notion-hover)' } : {}}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <nav className="flex items-center gap-1 flex-1">
+              {TABS.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => { setTab(t.id); setShowSettings(false) }}
+                  className={`px-3 py-1 rounded-md text-sm transition-colors ${
+                    tab === t.id && !showSettings
+                      ? 'text-notion-text bg-notion-hover font-medium'
+                      : 'text-notion-muted hover:text-notion-text'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </nav>
 
-            <div className="w-36 flex justify-end flex-shrink-0">
-              <button
-                onClick={() => setShowSettings(p => !p)}
-                className={`w-8 h-8 flex items-center justify-center rounded-lg text-2xl transition-colors ${
-                  showSettings ? 'text-notion-text bg-notion-hover' : 'text-notion-muted hover:text-notion-text hover:bg-notion-hover'
-                }`}
-                title="Settings"
-              >
-                ⚙
-              </button>
-            </div>
+            <button
+              onClick={() => setShowSettings(p => !p)}
+              className={`w-7 h-7 flex items-center justify-center rounded-md text-lg transition-colors ${
+                showSettings ? 'text-notion-text bg-notion-hover' : 'text-notion-muted hover:text-notion-text hover:bg-notion-hover'
+              }`}
+              title="Settings"
+            >
+              ⚙
+            </button>
           </header>
 
           <main className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -117,8 +111,14 @@ export default function App() {
                     onExternalSprintHandled={() => setWorkspaceSprintRequest(null)}
                   />
                 </div>
+                <div className={tab === 'plan' ? 'flex-1 min-h-0 overflow-y-auto' : 'hidden'}>
+                  <PlanningPage />
+                </div>
                 <div className={tab === 'calendar' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
                   <CalendarPage onRouteRecoverySprintToWorkspace={routeRecoverySprintToWorkspace} />
+                </div>
+                <div className={tab === 'analytics' ? 'flex-1 min-h-0 overflow-y-auto' : 'hidden'}>
+                  <AnalyticsPage />
                 </div>
               </>
             )}

@@ -36,7 +36,7 @@ const OUTCOMES = [
   },
 ]
 
-export function CheckInModal({ isOpen, onClose, taskId, taskTitle, sessionId, onOutcomeSubmitted }) {
+export function CheckInModal({ isOpen, onClose, taskId, taskTitle, sessionId, onOutcomeSubmitted, onReschedule }) {
   const [outcome, setOutcome] = useState(null)
   const [notes, setNotes] = useState('')
   const [aiMessage, setAiMessage] = useState('')
@@ -136,8 +136,8 @@ export function CheckInModal({ isOpen, onClose, taskId, taskTitle, sessionId, on
           )}
 
           <div className="flex justify-end gap-2 pt-2 border-t border-gray-800">
-            {(outcome === 'blocked' || outcome === 'skipped') && (
-              <Button variant="secondary" onClick={() => { handleClose(); /* TODO: open reschedule */ }}>
+            {(outcome === 'blocked' || outcome === 'skipped') && onReschedule && (
+              <Button variant="secondary" onClick={() => { handleClose(); onReschedule(taskId) }}>
                 Reschedule
               </Button>
             )}

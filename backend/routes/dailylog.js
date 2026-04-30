@@ -3,6 +3,7 @@
 const express = require("express");
 const crypto = require("crypto");
 const { dbGet, dbAll, dbRun } = require("../db/database");
+const { safeParseJSON } = require("../utils/json");
 const { generateDayPlan, generateEveningReview } = require("../services/openai");
 
 const router = express.Router();
@@ -128,9 +129,5 @@ router.post("/:date/ai-review", async (req, res) => {
     res.status(502).json({ error: "AI review failed", detail: err.message });
   }
 });
-
-function safeParseJSON(str, fallback) {
-  try { return JSON.parse(str); } catch { return fallback; }
-}
 
 module.exports = router;

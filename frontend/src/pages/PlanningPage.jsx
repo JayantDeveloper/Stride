@@ -129,7 +129,7 @@ export default function PlanningPage() {
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
               <div className="flex items-center gap-2 mb-3">
                 <span className="text-sm font-semibold text-gray-300">AI Review</span>
-                <span className="text-xs text-gray-600">• claude-sonnet-4-6</span>
+                <span className="text-xs text-gray-600">• gpt-4o</span>
               </div>
               <p className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{log.ai_review}</p>
             </div>

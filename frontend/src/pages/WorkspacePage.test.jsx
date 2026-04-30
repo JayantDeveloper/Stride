@@ -63,7 +63,7 @@ vi.mock("../utils/apiClient", () => ({
         priority: body.priority ?? "Medium",
         difficulty: body.difficulty ?? "Easy",
         estimated_mins: body.estimated_mins ?? 30,
-        allow_split: body.allow_split ?? 0,
+        allow_split: body.allow_split ?? 1,
         due_date: body.due_date ?? null,
         scheduled_date: body.scheduled_date ?? null,
         description: body.description ?? "",
@@ -274,6 +274,24 @@ describe("WorkspacePage regressions", () => {
       screen.queryByRole("button", { name: "Push" }),
     ).not.toBeInTheDocument();
     expect(mocks.organize).not.toHaveBeenCalled();
+  });
+
+  it("Push to Calendar panel hides after successful scheduling", async () => {
+    render(<WorkspacePage />);
+
+    await waitForInitialLoad();
+
+    fireEvent.click(screen.getByRole("button", { name: "Push to Calendar" }));
+
+    expect(screen.getByRole("button", { name: "Push" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Push" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "Push" }),
+      ).not.toBeInTheDocument();
+    });
+    expect(mocks.organize).toHaveBeenCalledTimes(1);
   });
 
   it("keeps recovery same-day only before 10 PM", async () => {

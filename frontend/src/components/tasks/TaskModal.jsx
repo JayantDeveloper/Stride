@@ -14,6 +14,7 @@ const EMPTY_TASK = {
   due_date: '',
   scheduled_date: '',     // which day this task is planned for (defaults to today at organize time)
   tags: [],
+  allow_split: 1,
 }
 
 const fieldClass = 'w-full bg-notion-surface border border-notion-border rounded-lg px-3 py-2 text-sm text-notion-text placeholder-notion-placeholder focus:outline-none focus:border-indigo-500 transition-colors'
@@ -38,6 +39,7 @@ export function TaskModal({ isOpen, onClose, onSave, task = null }) {
         due_date: task.due_date ?? '',
         scheduled_date: task.scheduled_date ?? '',
         tags: task.tags ?? [],
+        allow_split: task.allow_split ?? 1,
       })
     } else {
       setForm(EMPTY_TASK)

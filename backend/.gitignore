@@ -1,0 +1,6 @@
+*.db
+*.db-shm
+*.db-wal
+pomodoro.json
+tasks.json.migrated
+.worktrees/

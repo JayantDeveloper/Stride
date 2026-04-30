@@ -5,16 +5,9 @@ const crypto = require("crypto");
 const { dbGet, dbAll, dbRun } = require("../db/database");
 const openai = require("../services/openai");
 const gcal = require("../services/googleCalendar");
+const { safeParseJSON } = require("../utils/json");
 
 const router = express.Router();
-
-function safeParseJSON(str, fallback) {
-  try {
-    return JSON.parse(str);
-  } catch {
-    return fallback;
-  }
-}
 
 function normalizeStepList(steps) {
   return (steps ?? [])

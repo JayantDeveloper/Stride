@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const express = require("express");
 
-test("POST /api/tasks defaults allow_split to 0 when the client omits it", async (t) => {
+test("POST /api/tasks defaults allow_split to 1 when the client omits it", async (t) => {
   const originalDatabaseUrl = process.env.DATABASE_URL;
 
   process.env.DATABASE_URL = `pg-mem://stride-tasks-${Date.now()}-${Math.random()}`;
@@ -51,12 +51,12 @@ test("POST /api/tasks defaults allow_split to 0 when the client omits it", async
   const body = await response.json();
 
   assert.equal(response.status, 201);
-  assert.equal(body.task.allow_split, 0);
+  assert.equal(body.task.allow_split, 1);
   assert.equal(body.task.user_id, "test-user-id");
 
   const stored = await dbGet(
     "SELECT allow_split FROM tasks WHERE id = ? AND user_id = ?",
     [body.task.id, "test-user-id"],
   );
-  assert.equal(stored.allow_split, 0);
+  assert.equal(stored.allow_split, 1);
 });

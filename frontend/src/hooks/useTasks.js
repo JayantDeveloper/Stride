@@ -41,7 +41,7 @@ export function useTasks(filters = {}) {
         due_date: fields.due_date ?? null,
         scheduled_date: fields.scheduled_date ?? null,
         tags: fields.tags ?? [],
-        allow_split: fields.allow_split ?? 0,
+        allow_split: fields.allow_split ?? 1,
       },
     })
     setTasks(prev => [...prev, data.task])
@@ -92,11 +92,13 @@ export function useTasks(filters = {}) {
 
   // Reorder via drag-and-drop — update position in state, persist async
   const reorderTasks = useCallback(async (fromId, toId) => {
+    let newPosition = 0
     setTasks(prev => {
       const arr = [...prev]
       const from = arr.findIndex(t => t.id === fromId)
       const to = arr.findIndex(t => t.id === toId)
       if (from === -1 || to === -1) return prev
+      newPosition = to + 1
       const [moved] = arr.splice(from, 1)
       arr.splice(to, 0, moved)
       return arr
@@ -104,10 +106,10 @@ export function useTasks(filters = {}) {
     try {
       await apiRequest(`/api/tasks/${fromId}`, {
         method: 'PATCH',
-        body: { position: tasks.findIndex(t => t.id === toId) + 1 },
+        body: { position: newPosition },
       })
     } catch { /* keep reorder */ }
-  }, [tasks])
+  }, [])
 
   return { tasks, loading, error, createTask, updateTask, deleteTask, undoDelete, reorderTasks, reload: load }
 }

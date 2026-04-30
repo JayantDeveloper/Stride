@@ -82,18 +82,39 @@ export async function createApp() {
       "SELECT value FROM user_settings WHERE user_id = ? AND key = 'pomodoro_state'",
       [req.user.id],
     );
-    const state = row ? JSON.parse(row.value) : {};
+    let state = row ? JSON.parse(row.value) : {};
+
+    // Reset completedFocusSessions if it's a new day
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    const lastResetDate = state.lastResetDate || today;
+
+    if (lastResetDate !== today) {
+      state.completedFocusSessions = 0;
+      state.lastResetDate = today;
+
+      // Save the updated state
+      await dbRun(
+        `
+          INSERT INTO user_settings (user_id, key, value)
+          VALUES (?, ?, ?)
+          ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value
+        `,
+        [req.user.id, "pomodoro_state", JSON.stringify(state)],
+      );
+    }
+
     res.json({ state });
   });
 
   app.put("/api/pomodoro", requireAuth, async (req, res) => {
+    const state = { ...req.body, lastResetDate: new Date().toISOString().split('T')[0] };
     await dbRun(
       `
         INSERT INTO user_settings (user_id, key, value)
         VALUES (?, ?, ?)
         ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value
       `,
-      [req.user.id, "pomodoro_state", JSON.stringify(req.body)],
+      [req.user.id, "pomodoro_state", JSON.stringify(state)],
     );
     res.json({ ok: true });
   });
