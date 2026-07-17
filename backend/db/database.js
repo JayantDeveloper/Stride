@@ -1,4 +1,4 @@
-const { getPool, getPgMemDb } = require("./postgres");
+const { getPool, getPgMemDb } = require("./sqlite");
 
 function normalizeSql(sql) {
   return sql
@@ -15,7 +15,9 @@ function convertPlaceholders(sql) {
 }
 
 function prepareQuery(sql) {
-  return convertPlaceholders(normalizeSql(sql));
+  const normalized = normalizeSql(sql);
+  // SQLite uses ? placeholders natively; PostgreSQL needs $1, $2, ...
+  return process.env.LOCAL_MODE === 'true' ? normalized : convertPlaceholders(normalized);
 }
 
 async function dbGet(sql, params = []) {
@@ -52,11 +54,29 @@ async function dbBatch(statements) {
   }
 }
 
+async function addColumnIfMissing(table, columnDdl) {
+  try {
+    await dbRun(`ALTER TABLE ${table} ADD COLUMN ${columnDdl}`);
+  } catch (e) {
+    if (!/duplicate column|already exists/i.test(e.message)) throw e;
+  }
+}
+
+// One-time seed of the Eisenhower axes from existing priority, so tasks don't all
+// land in a single quadrant. Guarded by a flag so it never overwrites manual moves.
+async function backfillEisenhowerOnce() {
+  const flag = await dbGet("SELECT value FROM app_settings WHERE key = 'eisenhower_backfilled'");
+  if (flag?.value) return;
+  await dbRun("UPDATE tasks SET important = CASE WHEN priority IN ('Urgent','High') THEN 1 ELSE 0 END");
+  await dbRun("UPDATE tasks SET urgent = CASE WHEN priority = 'Urgent' THEN 1 ELSE 0 END");
+  await dbRun("INSERT INTO app_settings (key, value) VALUES ('eisenhower_backfilled', '1') ON CONFLICT (key) DO NOTHING");
+}
+
 async function initializeSchema() {
-  await initializeAuthSchema();
-  const userReference = getPgMemDb()
-    ? ""
-    : ' REFERENCES "user"(id) ON DELETE CASCADE';
+  if (process.env.LOCAL_MODE !== 'true') {
+    await initializeAuthSchema();
+  }
+  const userReference = '';
 
   await dbRun(`
     CREATE TABLE IF NOT EXISTS tasks (
@@ -162,6 +182,11 @@ async function initializeSchema() {
       PRIMARY KEY (user_id, key)
     )
   `);
+
+  // Eisenhower matrix axes (added after v1) — idempotent add + one-time seed
+  await addColumnIfMissing('tasks', 'urgent INTEGER NOT NULL DEFAULT 0');
+  await addColumnIfMissing('tasks', 'important INTEGER NOT NULL DEFAULT 0');
+  await backfillEisenhowerOnce();
 
   await dbRun(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_events_user_google_event

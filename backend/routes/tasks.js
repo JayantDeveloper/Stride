@@ -23,6 +23,8 @@ const ALLOWED_FIELDS = [
   "position",
   "calendar_event_id",
   "allow_split",
+  "urgent",
+  "important",
 ];
 
 // GET /api/tasks

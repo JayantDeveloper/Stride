@@ -1,25 +1,37 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Spinner } from './components/shared/Spinner'
 import { Toast } from './components/shared/Toast'
 import { ToastProvider } from './context/ToastContext'
-import WorkspacePage from './pages/WorkspacePage'
-import CalendarPage from './pages/CalendarPage'
-import PlanningPage from './pages/PlanningPage'
-import AnalyticsPage from './pages/AnalyticsPage'
-import SettingsPage from './pages/SettingsPage'
-import AuthPage from './pages/AuthPage'
 import { useAuthSession } from './hooks/useAuthSession'
+
+const WorkspacePage = lazy(() => import('./pages/WorkspacePage'))
+const MatrixPage    = lazy(() => import('./pages/MatrixPage'))
+const CalendarPage  = lazy(() => import('./pages/CalendarPage'))
+const PlanningPage  = lazy(() => import('./pages/PlanningPage'))
+const PlansPage     = lazy(() => import('./pages/PlansPage'))
+const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'))
+const SettingsPage  = lazy(() => import('./pages/SettingsPage'))
+const AuthPage      = lazy(() => import('./pages/AuthPage'))
 
 const TABS = [
   { id: 'workspace', label: 'Tasks' },
+  { id: 'matrix',    label: 'Matrix' },
   { id: 'plan',      label: 'Plan' },
+  { id: 'plans',     label: 'Plans' },
   { id: 'calendar',  label: 'Calendar' },
   { id: 'analytics', label: 'Analytics' },
 ]
 
+const PageFallback = () => (
+  <div className="flex-1 flex items-center justify-center">
+    <Spinner size="lg" />
+  </div>
+)
+
 export default function App() {
   const auth = useAuthSession()
   const [tab, setTab] = useState('workspace')
+  const [visited, setVisited] = useState(new Set(['workspace']))
   const [showSettings, setShowSettings] = useState(() => new URLSearchParams(window.location.search).get('settings') === '1')
   const [workspaceSprintRequest, setWorkspaceSprintRequest] = useState(null)
 
@@ -69,13 +81,13 @@ export default function App() {
             className="flex-shrink-0 flex items-center gap-6 px-4 h-10"
             style={{ borderBottom: '1px solid var(--color-notion-border)' }}
           >
-            <span className="text-xs font-semibold tracking-widest text-indigo-400 uppercase select-none">Stride</span>
+            <span className="text-xs font-semibold tracking-widest text-indigo-600 uppercase select-none">Stride</span>
 
             <nav className="flex items-center gap-1 flex-1">
               {TABS.map(t => (
                 <button
                   key={t.id}
-                  onClick={() => { setTab(t.id); setShowSettings(false) }}
+                  onClick={() => { setTab(t.id); setVisited(prev => new Set([...prev, t.id])); setShowSettings(false) }}
                   className={`px-3 py-1 rounded-md text-sm transition-colors ${
                     tab === t.id && !showSettings
                       ? 'text-notion-text bg-notion-hover font-medium'
@@ -99,6 +111,7 @@ export default function App() {
           </header>
 
           <main className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            <Suspense fallback={<PageFallback />}>
             {showSettings ? (
               <div className="flex-1 overflow-y-auto">
                 <SettingsPage session={auth.session} onSignOut={auth.signOut} />
@@ -111,17 +124,34 @@ export default function App() {
                     onExternalSprintHandled={() => setWorkspaceSprintRequest(null)}
                   />
                 </div>
-                <div className={tab === 'plan' ? 'flex-1 min-h-0 overflow-y-auto' : 'hidden'}>
-                  <PlanningPage />
-                </div>
-                <div className={tab === 'calendar' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
-                  <CalendarPage onRouteRecoverySprintToWorkspace={routeRecoverySprintToWorkspace} />
-                </div>
-                <div className={tab === 'analytics' ? 'flex-1 min-h-0 overflow-y-auto' : 'hidden'}>
-                  <AnalyticsPage />
-                </div>
+                {visited.has('matrix') && (
+                  <div className={tab === 'matrix' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
+                    <MatrixPage />
+                  </div>
+                )}
+                {visited.has('plan') && (
+                  <div className={tab === 'plan' ? 'flex-1 min-h-0 overflow-y-auto' : 'hidden'}>
+                    <PlanningPage />
+                  </div>
+                )}
+                {visited.has('plans') && (
+                  <div className={tab === 'plans' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
+                    <PlansPage />
+                  </div>
+                )}
+                {visited.has('calendar') && (
+                  <div className={tab === 'calendar' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
+                    <CalendarPage onRouteRecoverySprintToWorkspace={routeRecoverySprintToWorkspace} />
+                  </div>
+                )}
+                {visited.has('analytics') && (
+                  <div className={tab === 'analytics' ? 'flex-1 min-h-0 overflow-y-auto' : 'hidden'}>
+                    <AnalyticsPage />
+                  </div>
+                )}
               </>
             )}
+            </Suspense>
           </main>
 
           <Toast />
