@@ -1,8 +1,9 @@
 // MatrixPage — Eisenhower matrix view. Tasks live in four quadrants defined by
 // (important, urgent); drag a card into a quadrant to set both flags at once.
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTasks } from '../hooks/useTasks'
 import { Spinner } from '../components/shared/Spinner'
+import { useToast } from '../context/ToastContext'
 
 const QUADRANTS = [
   { key: 'do',        important: 1, urgent: 1, title: 'Do First',          sub: 'Urgent · Important',        accent: '#EF4444', tint: 'rgba(239,68,68,0.06)' },
@@ -10,6 +11,10 @@ const QUADRANTS = [
   { key: 'delegate',  important: 0, urgent: 1, title: 'Delegate / Quick',  sub: 'Urgent · Not important',    accent: '#F59E0B', tint: 'rgba(245,158,11,0.06)' },
   { key: 'eliminate', important: 0, urgent: 0, title: 'Eliminate / Later',  sub: 'Not urgent · Not important', accent: '#9CA3AF', tint: 'rgba(156,163,175,0.05)' },
 ]
+
+const MENU_WIDTH = 160
+const MENU_HEIGHT = 44
+const VIEWPORT_PADDING = 12
 
 const PRIORITY_COLOR = { Urgent: '#F87171', High: '#FB923C', Medium: '#FBBF24', Low: '#34D399' }
 
@@ -20,12 +25,13 @@ function fmtMins(m) {
   return `${Number.isInteger(h) ? h : h.toFixed(1)}h`
 }
 
-function TaskCard({ task, onDragStart, onDragEnd, dragging }) {
+function TaskCard({ task, onDragStart, onDragEnd, dragging, onContextMenu }) {
   return (
     <div
       draggable
       onDragStart={(e) => { e.dataTransfer.setData('text/plain', task.id); e.dataTransfer.effectAllowed = 'move'; onDragStart(task.id) }}
       onDragEnd={onDragEnd}
+      onContextMenu={(e) => onContextMenu(e, task)}
       className="rounded-md border px-2.5 py-2 cursor-grab active:cursor-grabbing select-none transition-opacity"
       style={{
         borderColor: 'var(--color-notion-border)',
@@ -48,9 +54,56 @@ function TaskCard({ task, onDragStart, onDragEnd, dragging }) {
 }
 
 export default function MatrixPage() {
-  const { tasks, loading, updateTask } = useTasks()
+  const { tasks, loading, updateTask, deleteTask, undoDelete } = useTasks()
+  const { addToast } = useToast()
   const [draggingId, setDraggingId] = useState(null)
   const [hoverKey, setHoverKey] = useState(null)
+  const [menu, setMenu] = useState(null)   // { task, x, y }
+
+  useEffect(() => {
+    if (!menu) return
+    const close = () => setMenu(null)
+    const onEscape = (e) => { if (e.key === 'Escape') setMenu(null) }
+    document.addEventListener('click', close)
+    document.addEventListener('contextmenu', close)
+    document.addEventListener('keydown', onEscape)
+    return () => {
+      document.removeEventListener('click', close)
+      document.removeEventListener('contextmenu', close)
+      document.removeEventListener('keydown', onEscape)
+    }
+  }, [menu])
+
+  // Cmd/Ctrl+Z restores the last deleted task, matching the calendar.
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        undoDelete()
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [undoDelete])
+
+  function openMenu(e, task) {
+    e.preventDefault()
+    e.stopPropagation()
+    // Keep the menu inside the viewport when right-clicking near an edge.
+    const x = Math.min(e.clientX, window.innerWidth - MENU_WIDTH - VIEWPORT_PADDING)
+    const y = Math.min(e.clientY, window.innerHeight - MENU_HEIGHT - VIEWPORT_PADDING)
+    setMenu({ task, x, y })
+  }
+
+  async function handleDelete(task) {
+    setMenu(null)
+    try {
+      await deleteTask(task.id)
+      addToast('Task deleted · Cmd+Z to undo', 'success')
+    } catch (err) {
+      addToast(`Could not delete task: ${err.message}`, 'error')
+    }
+  }
 
   const active = useMemo(() => tasks.filter((t) => t.status !== 'Done'), [tasks])
 
@@ -129,6 +182,7 @@ export default function MatrixPage() {
                       dragging={draggingId === t.id}
                       onDragStart={setDraggingId}
                       onDragEnd={() => setDraggingId(null)}
+                      onContextMenu={openMenu}
                     />
                   ))
                 )}
@@ -137,6 +191,21 @@ export default function MatrixPage() {
           )
         })}
       </div>
+
+      {menu && (
+        <div
+          className="fixed z-50 min-w-40 rounded-lg border border-notion-border bg-notion-surface shadow-2xl overflow-hidden"
+          style={{ top: menu.y, left: menu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-notion-hover transition-colors"
+            onClick={() => handleDelete(menu.task)}
+          >
+            Delete
+          </button>
+        </div>
+      )}
     </div>
   )
 }

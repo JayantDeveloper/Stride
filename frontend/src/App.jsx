@@ -4,23 +4,22 @@ import { Toast } from './components/shared/Toast'
 import { ToastProvider } from './context/ToastContext'
 import { useAuthSession } from './hooks/useAuthSession'
 
-const WorkspacePage = lazy(() => import('./pages/WorkspacePage'))
 const MatrixPage    = lazy(() => import('./pages/MatrixPage'))
 const CalendarPage  = lazy(() => import('./pages/CalendarPage'))
-const PlanningPage  = lazy(() => import('./pages/PlanningPage'))
 const PlansPage     = lazy(() => import('./pages/PlansPage'))
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'))
 const SettingsPage  = lazy(() => import('./pages/SettingsPage'))
 const AuthPage      = lazy(() => import('./pages/AuthPage'))
 
 const TABS = [
-  { id: 'workspace', label: 'Tasks' },
   { id: 'matrix',    label: 'Matrix' },
-  { id: 'plan',      label: 'Plan' },
   { id: 'plans',     label: 'Plans' },
   { id: 'calendar',  label: 'Calendar' },
   { id: 'analytics', label: 'Analytics' },
 ]
+
+// Matrix is the landing tab now that the Tasks board is gone.
+const DEFAULT_TAB = 'matrix'
 
 const PageFallback = () => (
   <div className="flex-1 flex items-center justify-center">
@@ -30,10 +29,9 @@ const PageFallback = () => (
 
 export default function App() {
   const auth = useAuthSession()
-  const [tab, setTab] = useState('workspace')
-  const [visited, setVisited] = useState(new Set(['workspace']))
+  const [tab, setTab] = useState(DEFAULT_TAB)
+  const [visited, setVisited] = useState(new Set([DEFAULT_TAB]))
   const [showSettings, setShowSettings] = useState(() => new URLSearchParams(window.location.search).get('settings') === '1')
-  const [workspaceSprintRequest, setWorkspaceSprintRequest] = useState(null)
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -44,16 +42,6 @@ export default function App() {
     const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`
     window.history.replaceState({}, '', nextUrl)
   }, [])
-
-  function routeRecoverySprintToWorkspace({ taskId, plannedMins = 10 }) {
-    setShowSettings(false)
-    setTab('workspace')
-    setWorkspaceSprintRequest({
-      id: Date.now() + Math.random(),
-      taskId,
-      plannedMins,
-    })
-  }
 
   return (
     <ToastProvider>
@@ -118,22 +106,9 @@ export default function App() {
               </div>
             ) : (
               <>
-                <div className={tab === 'workspace' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
-                  <WorkspacePage
-                    externalSprintRequest={workspaceSprintRequest}
-                    onExternalSprintHandled={() => setWorkspaceSprintRequest(null)}
-                  />
+                <div className={tab === 'matrix' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
+                  <MatrixPage />
                 </div>
-                {visited.has('matrix') && (
-                  <div className={tab === 'matrix' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
-                    <MatrixPage />
-                  </div>
-                )}
-                {visited.has('plan') && (
-                  <div className={tab === 'plan' ? 'flex-1 min-h-0 overflow-y-auto' : 'hidden'}>
-                    <PlanningPage />
-                  </div>
-                )}
                 {visited.has('plans') && (
                   <div className={tab === 'plans' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
                     <PlansPage />
@@ -141,7 +116,7 @@ export default function App() {
                 )}
                 {visited.has('calendar') && (
                   <div className={tab === 'calendar' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
-                    <CalendarPage onRouteRecoverySprintToWorkspace={routeRecoverySprintToWorkspace} />
+                    <CalendarPage />
                   </div>
                 )}
                 {visited.has('analytics') && (
