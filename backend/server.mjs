@@ -8,6 +8,7 @@ import cors from "cors";
 import express from "express";
 
 import {
+  auth,
   authHandler,
   ensureAuthSchema,
   getSessionFromRequest,
@@ -30,10 +31,18 @@ const analyticsRouter = require("./routes/analytics");
 const dailyLogRouter = require("./routes/dailylog");
 const calendarRouter = require("./routes/calendar");
 const aiRouter = require("./routes/ai");
+const plansRouter = require("./routes/plans");
 
 const PORT = process.env.PORT || 5001;
 
+const LOCAL_USER = { id: 'local-user', email: 'local@stride.app', name: 'Local User' };
+
 async function requireAuth(req, res, next) {
+  if (process.env.LOCAL_MODE === 'true') {
+    req.user = LOCAL_USER;
+    req.authSession = null;
+    return next();
+  }
   try {
     const session = await getSessionFromRequest(req);
     if (!session?.user) {
@@ -55,11 +64,43 @@ export async function createApp() {
   await ensureAuthSchema();
   await initializeSchema();
 
+  if (process.env.LOCAL_MODE === 'true') {
+    // Seed user row so better-auth's account table FK works for Google Calendar linking
+    await dbRun(`
+      INSERT INTO "user" (id, name, email, "emailVerified", "createdAt", "updatedAt")
+      VALUES ('local-user', 'Local User', 'local@stride.app', 1, datetime('now'), datetime('now'))
+      ON CONFLICT (id) DO NOTHING
+    `);
+
+    // Seed a password credential so /api/local-session can call signInEmail
+    // and return a properly signed better-auth session cookie for Google OAuth linking
+    const { hashPassword } = await import('@better-auth/utils/password');
+    const hash = await hashPassword('local-stride-passphrase');
+    await dbRun(`
+      INSERT INTO account (id, userId, providerId, accountId, password, createdAt, updatedAt)
+      VALUES ('local-credential', 'local-user', 'credential', 'local@stride.app', ?, datetime('now'), datetime('now'))
+      ON CONFLICT (id) DO UPDATE SET password = excluded.password, updatedAt = datetime('now')
+    `, [hash]);
+  }
+
   const app = express();
+
+  // Stride's own UI plus any sibling local app allowed to push events in
+  // (Forecast runs on :8090 and posts campus events to the calendar).
+  // EXTRA_ORIGINS is a comma-separated list for anything else.
+  const allowedOrigins = [
+    process.env.FRONTEND_URL || "http://localhost:5173",
+    "http://localhost:8090",
+    ...(process.env.EXTRA_ORIGINS || "").split(",").map(o => o.trim()).filter(Boolean),
+  ];
 
   app.use(
     cors({
-      origin: process.env.FRONTEND_URL || "http://localhost:5173",
+      origin(origin, callback) {
+        // No origin: same-origin requests, curl, server-to-server.
+        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+        return callback(new Error(`Origin not allowed: ${origin}`));
+      },
       credentials: true,
     }),
   );
@@ -67,8 +108,28 @@ export async function createApp() {
   app.use("/api/auth", authHandler);
   app.use(express.json());
 
-  app.get("/api/health", (req, res) => res.json({ ok: true }));
+  app.get("/api/health", (req, res) => res.json({ ok: true, mode: process.env.LOCAL_MODE === 'true' ? 'local' : 'auth' }));
 
+  // Signs in local-user via better-auth and returns the signed session cookie
+  // so /api/auth/link-social and /api/auth/list-accounts work for Google Calendar
+  if (process.env.LOCAL_MODE === 'true') {
+    app.post("/api/local-session", async (req, res) => {
+      try {
+        const result = await auth.api.signInEmail({
+          body: { email: 'local@stride.app', password: 'local-stride-passphrase', rememberMe: true },
+          returnHeaders: true,
+        });
+        const cookies = result?.headers?.getSetCookie?.() ?? [];
+        if (cookies.length) res.setHeader('Set-Cookie', cookies);
+        res.json({ ok: true });
+      } catch (err) {
+        console.error('local-session error:', err.message);
+        res.status(500).json({ error: err.message });
+      }
+    });
+  }
+
+  app.use("/api/plans", requireAuth, plansRouter);
   app.use("/api/tasks", requireAuth, tasksRouter);
   app.use("/api/sessions", requireAuth, sessionsRouter);
   app.use("/api/checkins", requireAuth, checkinsRouter);

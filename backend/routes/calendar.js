@@ -139,14 +139,28 @@ router.post("/events", async (req, res) => {
   }
 
   try {
-    const googleEvent = await gcal.createEvent(userId, {
-      title,
-      description,
-      location,
-      startTime: start_time,
-      endTime: end_time,
-      colorId: color_id,
-    });
+    // Google sync is best-effort. It used to run first and throw, which meant a
+    // disconnected or expired Google token silently discarded the event instead
+    // of saving it. Stride is local-first, so the local row is the source of
+    // truth and the Google id is an optimisation layered on top.
+    //
+    // A NULL google_event_id is the marker for "not yet pushed to Google";
+    // synced_at is NOT NULL in the schema, so it cannot carry that meaning.
+    let googleEvent = null;
+    let syncError = null;
+    try {
+      googleEvent = await gcal.createEvent(userId, {
+        title,
+        description,
+        location,
+        startTime: start_time,
+        endTime: end_time,
+        colorId: color_id,
+      });
+    } catch (err) {
+      syncError = err.message || String(err);
+      console.warn(`[calendar] Google sync failed, saving locally only: ${syncError}`);
+    }
 
     const localId = crypto.randomUUID();
     const eventType = task_id ? "task_block" : "external";
@@ -159,7 +173,7 @@ router.post("/events", async (req, res) => {
       [
         localId,
         userId,
-        googleEvent.id,
+        googleEvent?.id ?? null,
         title,
         description,
         location,
@@ -184,10 +198,16 @@ router.post("/events", async (req, res) => {
       "SELECT * FROM calendar_events WHERE id = ? AND user_id = ?",
       [localId, userId],
     );
-    res.status(201).json({ event: saved });
+    // 201 either way; syncedToGoogle tells the caller whether it reached Google
+    // so the UI can say "saved locally" instead of implying a full sync.
+    res.status(201).json({
+      event: saved,
+      syncedToGoogle: Boolean(googleEvent),
+      syncError,
+    });
   } catch (err) {
     console.error("Create event error:", err.message);
-    res.status(502).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 

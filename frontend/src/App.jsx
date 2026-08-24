@@ -12,14 +12,13 @@ const SettingsPage  = lazy(() => import('./pages/SettingsPage'))
 const AuthPage      = lazy(() => import('./pages/AuthPage'))
 
 const TABS = [
+  { id: 'calendar',  label: 'Calendar' },
   { id: 'matrix',    label: 'Matrix' },
   { id: 'plans',     label: 'Plans' },
-  { id: 'calendar',  label: 'Calendar' },
   { id: 'analytics', label: 'Analytics' },
 ]
 
-// Matrix is the landing tab now that the Tasks board is gone.
-const DEFAULT_TAB = 'matrix'
+const DEFAULT_TAB = 'calendar'
 
 const PageFallback = () => (
   <div className="flex-1 flex items-center justify-center">
@@ -106,19 +105,19 @@ export default function App() {
               </div>
             ) : (
               <>
-                <div className={tab === 'matrix' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
-                  <MatrixPage />
-                </div>
+                {visited.has('matrix') && (
+                  <div className={tab === 'matrix' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
+                    <MatrixPage />
+                  </div>
+                )}
                 {visited.has('plans') && (
                   <div className={tab === 'plans' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
                     <PlansPage />
                   </div>
                 )}
-                {visited.has('calendar') && (
-                  <div className={tab === 'calendar' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
-                    <CalendarPage />
-                  </div>
-                )}
+                <div className={tab === 'calendar' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
+                  <CalendarPage />
+                </div>
                 {visited.has('analytics') && (
                   <div className={tab === 'analytics' ? 'flex-1 min-h-0 overflow-y-auto' : 'hidden'}>
                     <AnalyticsPage />
