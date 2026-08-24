@@ -120,6 +120,7 @@ async function initializeSchema() {
       block_state TEXT NOT NULL DEFAULT 'scheduled',
       color TEXT DEFAULT 'blue',
       color_id TEXT DEFAULT '',
+      recurrence TEXT,
       synced_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);

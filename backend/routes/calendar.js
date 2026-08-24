@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const { dbGet, dbAll, dbRun } = require("../db/database");
 const gcal = require("../services/googleCalendar");
 const { organizeTasks } = require("../services/taskOrganizer");
+const { expandEvent, masterIdOf } = require("../services/recurrence");
 
 const router = express.Router();
 
@@ -31,7 +32,31 @@ router.get("/events", async (req, res) => {
   if (conditions.length) query += " AND " + conditions.join(" AND ");
   query += " ORDER BY start_time ASC";
 
-  const events = await dbAll(query, params);
+  const rows = await dbAll(query, params);
+
+  // Recurring masters are stored once and expanded here, so the client needs no
+  // knowledge of RRULEs. A master whose own start_time predates the window is
+  // excluded by the SQL above, so recurring rows are fetched separately.
+  const recurringMasters = await dbAll(
+    "SELECT * FROM calendar_events WHERE user_id = ? AND recurrence IS NOT NULL AND recurrence != ''",
+    [req.user.id],
+  );
+
+  const windowStart = req.query.start ? new Date(req.query.start) : new Date(Date.now() - 30 * 864e5);
+  const windowEnd = req.query.end ? new Date(req.query.end) : new Date(Date.now() + 180 * 864e5);
+
+  const expanded = [];
+  for (const master of recurringMasters) {
+    expanded.push(...expandEvent(master, windowStart, windowEnd));
+  }
+
+  // Drop the master rows themselves; only their occurrences are shown.
+  const recurringIds = new Set(recurringMasters.map((m) => m.id));
+  const singles = rows.filter((r) => !recurringIds.has(r.id));
+
+  const events = [...singles, ...expanded].sort(
+    (a, b) => new Date(a.start_time) - new Date(b.start_time),
+  );
   res.json({ events });
 });
 
@@ -130,6 +155,7 @@ router.post("/events", async (req, res) => {
     color = "blue",
     color_id = "",
     task_id,
+    recurrence = null,        // RFC 5545 RRULE, e.g. "RRULE:FREQ=DAILY"
   } = req.body;
 
   if (!title || !start_time || !end_time) {
@@ -156,6 +182,7 @@ router.post("/events", async (req, res) => {
         startTime: start_time,
         endTime: end_time,
         colorId: color_id,
+        recurrence: recurrence ? [recurrence] : undefined,
       });
     } catch (err) {
       syncError = err.message || String(err);
@@ -167,8 +194,8 @@ router.post("/events", async (req, res) => {
     await dbRun(
       `
       INSERT INTO calendar_events
-        (id, user_id, google_event_id, google_cal_id, title, description, location, start_time, end_time, all_day, event_type, task_id, block_state, color, color_id, synced_at)
-      VALUES (?, ?, ?, 'primary', ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, CURRENT_TIMESTAMP)
+        (id, user_id, google_event_id, google_cal_id, title, description, location, start_time, end_time, all_day, event_type, task_id, block_state, color, color_id, recurrence, synced_at)
+      VALUES (?, ?, ?, 'primary', ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, ?, CURRENT_TIMESTAMP)
     `,
       [
         localId,
@@ -184,6 +211,7 @@ router.post("/events", async (req, res) => {
         task_id ?? null,
         color,
         color_id,
+        recurrence,
       ],
     );
 
@@ -214,9 +242,11 @@ router.post("/events", async (req, res) => {
 // PATCH /api/calendar/events/:id — update event in Google Calendar + local cache
 router.patch("/events/:id", async (req, res) => {
   const userId = req.user.id;
+  // Occurrences are virtual (`<masterId>::<startISO>`); writes hit the master,
+  // so editing or deleting one instance changes the whole series.
   const event = await dbGet(
     "SELECT * FROM calendar_events WHERE id = ? AND user_id = ?",
-    [req.params.id, userId],
+    [masterIdOf(req.params.id), userId],
   );
   if (!event) return res.status(404).json({ error: "Event not found" });
 
@@ -290,7 +320,7 @@ router.patch("/events/:id", async (req, res) => {
 
     if (updates.length > 0) {
       updates.push("synced_at = CURRENT_TIMESTAMP");
-      params.push(req.params.id, userId);
+      params.push(masterIdOf(req.params.id), userId);
       await dbRun(
         `UPDATE calendar_events SET ${updates.join(", ")} WHERE id = ? AND user_id = ?`,
         params,
@@ -299,7 +329,7 @@ router.patch("/events/:id", async (req, res) => {
 
     const updated = await dbGet(
       "SELECT * FROM calendar_events WHERE id = ? AND user_id = ?",
-      [req.params.id, userId],
+      [masterIdOf(req.params.id), userId],
     );
     res.json({ event: updated });
   } catch (err) {
@@ -311,9 +341,11 @@ router.patch("/events/:id", async (req, res) => {
 // DELETE /api/calendar/events/:id — delete from Google Calendar + local cache
 router.delete("/events/:id", async (req, res) => {
   const userId = req.user.id;
+  // Occurrences are virtual (`<masterId>::<startISO>`); writes hit the master,
+  // so editing or deleting one instance changes the whole series.
   const event = await dbGet(
     "SELECT * FROM calendar_events WHERE id = ? AND user_id = ?",
-    [req.params.id, userId],
+    [masterIdOf(req.params.id), userId],
   );
   if (!event) return res.status(404).json({ error: "Event not found" });
 
@@ -322,12 +354,12 @@ router.delete("/events/:id", async (req, res) => {
       await gcal.deleteEvent(userId, event.google_event_id);
     }
     await dbRun("DELETE FROM calendar_events WHERE id = ? AND user_id = ?", [
-      req.params.id,
+      masterIdOf(req.params.id),
       userId,
     ]);
     await dbRun(
       "UPDATE tasks SET calendar_event_id = NULL WHERE calendar_event_id = ? AND user_id = ?",
-      [req.params.id, userId],
+      [masterIdOf(req.params.id), userId],
     );
     res.json({ ok: true });
   } catch (err) {
