@@ -7,6 +7,7 @@ import { useAuthSession } from './hooks/useAuthSession'
 const MatrixPage    = lazy(() => import('./pages/MatrixPage'))
 const CalendarPage  = lazy(() => import('./pages/CalendarPage'))
 const PlansPage     = lazy(() => import('./pages/PlansPage'))
+const FoodPage      = lazy(() => import('./pages/FoodPage'))
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'))
 const SettingsPage  = lazy(() => import('./pages/SettingsPage'))
 const AuthPage      = lazy(() => import('./pages/AuthPage'))
@@ -15,6 +16,7 @@ const TABS = [
   { id: 'calendar',  label: 'Calendar' },
   { id: 'matrix',    label: 'Matrix' },
   { id: 'plans',     label: 'Plans' },
+  { id: 'food',      label: 'Food' },
   { id: 'analytics', label: 'Analytics' },
 ]
 
@@ -118,6 +120,11 @@ export default function App() {
                 <div className={tab === 'calendar' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
                   <CalendarPage />
                 </div>
+                {visited.has('food') && (
+                  <div className={tab === 'food' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
+                    <FoodPage />
+                  </div>
+                )}
                 {visited.has('analytics') && (
                   <div className={tab === 'analytics' ? 'flex-1 min-h-0 overflow-y-auto' : 'hidden'}>
                     <AnalyticsPage />
