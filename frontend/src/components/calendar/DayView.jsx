@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useMemo } from 'react'
+import { useRef, useEffect, useState, useMemo, memo } from 'react'
 import { TimeGutter } from './TimeGutter'
 import { CalendarEvent } from './CalendarEvent'
 import { layoutEvents } from '../../utils/calendarLayout'
@@ -13,13 +13,24 @@ const EMPTY_DRAG_IMAGE = typeof Image !== 'undefined'
     })()
   : null
 
-export function DayView({ date, events, onEventClick, onEventContextMenu, onSlotClick, onEventDrop }) {
+const ZOOM_LEVELS = [1, 2, 3, 4]
+
+export const DayView = memo(function DayView({ date, events, onEventClick, onEventContextMenu, onSlotClick, onEventDrop }) {
   const containerRef = useRef(null)
   const [draggingId, setDraggingId] = useState(null)
   const [ghostMinute, setGhostMinute] = useState(null)
   const justDropped = useRef(false)
-  const [hourHeight, setHourHeight] = useState(65)
+  // Auto-fitting 12 hours to the viewport puts a minute at roughly one pixel,
+  // which is unreadable for a routine built from 2-15 minute blocks: the cards
+  // are shorter than their own text and spill onto their neighbours. Zoom
+  // multiplies that baseline and is remembered between visits.
+  const [zoom, setZoom] = useState(() => {
+    const saved = Number(window.localStorage.getItem('stride.dayZoom'))
+    return ZOOM_LEVELS.includes(saved) ? saved : 3
+  })
+  const [baseHourHeight, setBaseHourHeight] = useState(65)
 
+  const hourHeight = baseHourHeight * zoom
   const pxPerMin = hourHeight / 60
   const totalHeight = hourHeight * 24
   const draggedEvent = draggingId ? events.find(event => event.id === draggingId) ?? null : null
@@ -33,7 +44,7 @@ export function DayView({ date, events, onEventClick, onEventContextMenu, onSlot
     if (!el) return
     const update = () => {
       const h = el.clientHeight
-      if (h > 100) setHourHeight(Math.max(40, Math.floor(h / 12)))
+      if (h > 100) setBaseHourHeight(Math.max(40, Math.floor(h / 12)))
     }
     update()
     const ro = new ResizeObserver(update)
@@ -70,6 +81,11 @@ export function DayView({ date, events, onEventClick, onEventContextMenu, onSlot
       containerRef.current.scrollTop = scrollHour * hourHeight
     }
   }, [date, hourHeight])
+
+  function changeZoom(next) {
+    setZoom(next)
+    window.localStorage.setItem('stride.dayZoom', String(next))
+  }
 
   const isToday = date === todayISO()
   const nowPx = isToday
@@ -126,6 +142,29 @@ export function DayView({ date, events, onEventClick, onEventContextMenu, onSlot
 
       {/* Scrollable time grid */}
       <div ref={containerRef} className="flex-1 overflow-y-auto" style={{ scrollbarGutter: 'stable' }}>
+        <div
+          className="sticky top-0 z-20 flex justify-end gap-1 px-2 py-1 pointer-events-none"
+          style={{ height: 0 }}
+        >
+          <div className="flex items-center gap-1 rounded-md px-1.5 py-1 pointer-events-auto"
+               style={{ background: 'var(--color-notion-bg)', border: '1px solid var(--color-notion-border)' }}>
+            <span className="text-[10px] uppercase tracking-wide pr-0.5" style={{ color: 'var(--color-notion-muted)' }}>Zoom</span>
+            {ZOOM_LEVELS.map(level => (
+              <button
+                key={level}
+                onClick={() => changeZoom(level)}
+                className="text-[11px] font-semibold px-1.5 py-0.5 rounded transition-colors"
+                style={{
+                  background: zoom === level ? 'var(--color-notion-hover)' : 'transparent',
+                  color: zoom === level ? 'var(--color-notion-text)' : 'var(--color-notion-muted)',
+                }}
+              >
+                {level}x
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="flex" style={{ height: `${totalHeight}px`, minHeight: `${totalHeight}px` }}>
           <TimeGutter hourHeight={hourHeight} />
 
@@ -206,4 +245,4 @@ export function DayView({ date, events, onEventClick, onEventContextMenu, onSlot
       </div>
     </div>
   )
-}
+})
