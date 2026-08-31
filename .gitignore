@@ -36,3 +36,6 @@ backend/data/
 
 # Local git worktrees
 .worktrees/
+
+# Neon connection string (contains a DB password)
+.neon-url

@@ -1,14 +1,13 @@
 @import "tailwindcss";
 
 @theme {
-  /* Notion dark palette */
-  --color-notion-bg:          #191919;
-  --color-notion-surface:     #202020;
-  --color-notion-hover:       #2f2f2f;
-  --color-notion-border:      #2f2f2f;
-  --color-notion-text:        #e6e6e6;
-  --color-notion-muted:       #787774;
-  --color-notion-placeholder: #555555;
+  --color-notion-bg:          #fafaf9;
+  --color-notion-surface:     #f5f5f4;
+  --color-notion-hover:       #eeeeec;
+  --color-notion-border:      #e5e5e3;
+  --color-notion-text:        #111110;
+  --color-notion-muted:       #78716c;
+  --color-notion-placeholder: #a8a29e;
 }
 
 @layer base {
@@ -28,22 +27,35 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Notion-style scrollbar */
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #3d3d3d; border-radius: 999px; }
-  ::-webkit-scrollbar-thumb:hover { background: #4d4d4d; }
+  /* Installed as a home-screen app the page runs full-bleed under the notch and the home
+     indicator, so the shell has to pad itself back out. These are 0 in a normal browser
+     tab, so the rule is safe everywhere. */
+  #root {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
 
-  /* Date/time input styling */
+  /* Safari zooms the whole page when a focused input's font-size is under 16px. On a
+     touch-first layout that reads as the app randomly jumping. 16px prevents it. */
+  @media (max-width: 640px) {
+    input, textarea, select { font-size: 16px; }
+  }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #d4d4d0; border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: #b8b8b4; }
+
   input[type="date"],
   input[type="datetime-local"],
   input[type="time"] {
-    color-scheme: dark;
+    color-scheme: light;
   }
 
-  /* Selection */
   ::selection {
-    background-color: #3730a3;
-    color: #e6e6e6;
+    background-color: #e0e7ff;
+    color: #111110;
   }
 }

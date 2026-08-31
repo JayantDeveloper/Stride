@@ -1,4 +1,12 @@
-const { getPool, getPgMemDb } = require("./sqlite");
+// Pick the driver from LOCAL_MODE rather than hardcoding one.
+//
+// This line used to read require("./sqlite") unconditionally (changed in 5906931 while
+// working on recurring events). That silently broke production: auth.mjs talks to
+// ./db/postgres, so a deployed instance would run auth on Postgres while every task and
+// calendar query still went to a local SQLite file — which on an ephemeral host is wiped
+// on each restart. Both modules export the same { getPool, getPgMemDb } interface.
+const { getPool, getPgMemDb } =
+  process.env.LOCAL_MODE === "true" ? require("./sqlite") : require("./postgres");
 
 function normalizeSql(sql) {
   return sql
@@ -122,6 +130,19 @@ async function initializeSchema() {
       color_id TEXT DEFAULT '',
       recurrence TEXT,
       synced_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Google events the user deleted locally while disconnected. Sync consults
+  // this so a reconnect does not resurrect them: the delete is best-effort
+  // against Google, and when it fails the intent still has to survive.
+  await dbRun(`
+    CREATE TABLE IF NOT EXISTS deleted_google_events (
+      user_id TEXT NOT NULL${userReference},
+      google_event_id TEXT NOT NULL,
+      title TEXT DEFAULT '',
+      deleted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, google_event_id)
     )
   `);
 
