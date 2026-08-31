@@ -2,6 +2,7 @@ services:
   - type: web
     name: stride-backend
     runtime: node
+    region: ohio
     rootDir: backend
     buildCommand: npm install
     startCommand: node server.mjs
