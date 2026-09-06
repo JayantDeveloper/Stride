@@ -4,6 +4,7 @@ import { Toast } from './components/shared/Toast'
 import { ToastProvider } from './context/ToastContext'
 import { useAuthSession } from './hooks/useAuthSession'
 
+const FocusPage     = lazy(() => import('./pages/FocusPage'))
 const MatrixPage    = lazy(() => import('./pages/MatrixPage'))
 const CalendarPage  = lazy(() => import('./pages/CalendarPage'))
 const PlansPage     = lazy(() => import('./pages/PlansPage'))
@@ -13,6 +14,7 @@ const SettingsPage  = lazy(() => import('./pages/SettingsPage'))
 const AuthPage      = lazy(() => import('./pages/AuthPage'))
 
 const TABS = [
+  { id: 'focus',     label: 'Focus' },
   { id: 'calendar',  label: 'Calendar' },
   { id: 'matrix',    label: 'Matrix' },
   { id: 'plans',     label: 'Plans' },
@@ -20,7 +22,7 @@ const TABS = [
   { id: 'analytics', label: 'Analytics' },
 ]
 
-const DEFAULT_TAB = 'calendar'
+const DEFAULT_TAB = 'focus'
 
 const PageFallback = () => (
   <div className="flex-1 flex items-center justify-center">
@@ -107,6 +109,11 @@ export default function App() {
               </div>
             ) : (
               <>
+                {visited.has('focus') && (
+                  <div className={tab === 'focus' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
+                    <FocusPage />
+                  </div>
+                )}
                 {visited.has('matrix') && (
                   <div className={tab === 'matrix' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
                     <MatrixPage />

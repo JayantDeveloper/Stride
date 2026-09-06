@@ -32,6 +32,7 @@ const dailyLogRouter = require("./routes/dailylog");
 const calendarRouter = require("./routes/calendar");
 const aiRouter = require("./routes/ai");
 const plansRouter = require("./routes/plans");
+const settingsRouter = require("./routes/settings");
 
 const PORT = process.env.PORT || 5001;
 
@@ -130,6 +131,7 @@ export async function createApp() {
   }
 
   app.use("/api/plans", requireAuth, plansRouter);
+  app.use("/api/settings", requireAuth, settingsRouter);
   app.use("/api/tasks", requireAuth, tasksRouter);
   app.use("/api/sessions", requireAuth, sessionsRouter);
   app.use("/api/checkins", requireAuth, checkinsRouter);
